@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="GodotTextHelper.vcxproj" Id="d0d1c342-12b8-4f5d-b239-0f4a8c746fdc" />
+</Solution>
