@@ -21,6 +21,7 @@ std::string g_ClipboardBuffer;
 std::chrono::steady_clock::time_point g_LastTextTime;
 bool g_HasPendingText = false;
 
+// HS65001#-1C@0:dinput8.dll:hookme
 extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
     if (!text) return;
 
