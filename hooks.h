@@ -3,18 +3,10 @@
 #include <string>
 #include <set>
 
-// ==========================================
-// Godot 结构体前向声明
-// ==========================================
-
 struct Variant;
 struct StringName;
 struct GDScriptInstance;
 struct CallError;
-
-// ==========================================
-// Hook 配置结构
-// ==========================================
 
 struct HookRule {
     std::string scriptPath;         // 脚本路径过滤（空 = 不检查路径）
@@ -31,24 +23,16 @@ struct HookRule {
         : scriptPath(path), functionName(func), argIndices(args) {}
 };
 
-// ==========================================
-// Godot 结构体定义
-// ==========================================
-
-// Godot Variant 类型
 struct Variant {
-    int type;           // 0x0: 类型标记，0x4 = String
+    int type;
     int padding;
-    void* data;         // 0x8: 数据指针 (对于 String 是 UTF-32)
-    // ... 其他字段
+    void* data;
 };
 
-// Godot StringName 结构
 struct StringName {
-    void* _data;        // 0x0
-    void* builtin_str;  // 0x8: 内置函数名 (UTF-8)
-    void* custom_str;   // 0x10: 自定义函数名 (UTF-32)
-    // ... 其他字段
+    void* _data;
+    void* builtin_str;
+    void* custom_str;
 };
 
 struct CallError {
@@ -57,11 +41,6 @@ struct CallError {
     int expected;
 };
 
-// ==========================================
-// Hook 函数类型定义
-// ==========================================
-
-// GDScriptInstance::callp 函数类型
 typedef Variant* (__fastcall* GDScriptCallp_t)(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -73,10 +52,6 @@ typedef Variant* (__fastcall* GDScriptCallp_t)(
 
 extern GDScriptCallp_t g_OriginalGDScriptCallp;
 
-// ==========================================
-// Detour 函数声明区域
-// ==========================================
-
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -86,13 +61,6 @@ Variant* __fastcall GDScriptCallp_Detour(
     CallError* r_error
 );
 
-// ==========================================
-// X64dbg 签名解析工具
-// ==========================================
-
-// 将 x64dbg 格式的签名转换为 pattern 和 mask
-// x64dbg 格式示例: "48 8B ? ? ? 48 89"
-// 其中 '?' 表示通配符
 struct SignaturePattern {
     std::vector<BYTE> pattern;
     std::string mask;
@@ -165,12 +133,5 @@ inline void* FindPatternInModule(const char* moduleName, const char* x64dbgSigna
     return nullptr;
 }
 
-// ==========================================
-// Hook 管理函数
-// ==========================================
-
-// 初始化所有 hooks（在 dllmain.cpp 中调用）
 bool SetupAllHooks();
-
-// 清理所有 hooks（在 dllmain.cpp 中调用）
 void CleanupAllHooks();

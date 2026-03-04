@@ -24,6 +24,9 @@
     <ClInclude Include="hooks.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="utils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -35,15 +38,8 @@
     <ClCompile Include="hooks.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="README.md" />
-    <None Include="SETUP_GUIDE.md" />
-    <None Include="QUICKSTART.md" />
-    <None Include="PROJECT_STATUS.md" />
-    <None Include="HOOK_CONFIGURATION.md" />
-    <None Include="HOOK_EXAMPLES.md" />
-    <None Include="QUICKSTART_HOOK.md" />
-    <None Include="README_NEW.md" />
+    <ClCompile Include="utils.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
 </Project>

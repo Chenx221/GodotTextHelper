@@ -148,6 +148,7 @@
     <ClInclude Include="framework.h" />
     <ClInclude Include="hooks.h" />
     <ClInclude Include="pch.h" />
+    <ClInclude Include="utils.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
@@ -158,16 +159,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
-    <None Include="HOOK_CONFIGURATION.md" />
-    <None Include="HOOK_EXAMPLES.md" />
-    <None Include="PROJECT_STATUS.md" />
-    <None Include="QUICKSTART.md" />
-    <None Include="QUICKSTART_HOOK.md" />
-    <None Include="README.md" />
-    <None Include="README_NEW.md" />
-    <None Include="SETUP_GUIDE.md" />
+    <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

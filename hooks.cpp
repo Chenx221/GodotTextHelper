@@ -3,13 +3,12 @@
 #include <string>
 #include <set>
 #include <vector>
+#include <mutex>
+#include <chrono>
 
-// ==========================================
-// 配置区域
-// ==========================================
+constexpr bool ENABLE_CLIPBOARD = true;
+constexpr int CLIPBOARD_TIMEOUT_MS = 1000;
 
-// Hook 规则列表
-// 留空则不监控任何函数
 std::vector<HookRule> g_HookRules = {
     // 示例 1: 只监控函数名，不限制路径，提取所有字符串参数
     // HookRule("print"),
@@ -26,18 +25,83 @@ std::vector<HookRule> g_HookRules = {
     // HookRule("res://scripts/game_manager.gd", "log_event", {0, 1}),
 };
 
-// ==========================================
-// 原始函数指针
-// ==========================================
-
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
 
-// ==========================================
-// 辅助函数
-// ==========================================
+std::mutex g_ClipboardMutex;
+std::string g_ClipboardBuffer;
+std::chrono::steady_clock::time_point g_LastTextTime;
+bool g_HasPendingText = false;
 
-// 将 UTF-32 (char32_t*) 转换为 UTF-8 (std::string)
-// 使用 Windows API 代替已弃用的 codecvt
+__declspec(dllexport) __declspec(noinline) void ProcessTextForClipboard(const char* text) {
+    if (!text) return;
+
+    volatile int dummy = 0;
+    for (const char* p = text; *p; ++p) {
+        dummy += *p;
+    }
+
+    if (dummy > 0x7FFFFFFF) {
+        OutputDebugStringA("[ProcessText] Overflow protection\n");
+    }
+}
+
+void WriteToClipboard(const std::string& text) {
+    if (text.empty() || !ENABLE_CLIPBOARD) return;
+
+    ProcessTextForClipboard(text.c_str());
+
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+
+        size_t size = (text.length() + 1) * sizeof(char);
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, size);
+
+        if (hMem) {
+            char* pMem = (char*)GlobalLock(hMem);
+            if (pMem) {
+                memcpy(pMem, text.c_str(), size);
+                GlobalUnlock(hMem);
+                SetClipboardData(CF_TEXT, hMem);
+            }
+        }
+
+        CloseClipboard();
+        OutputDebugStringA("[Clipboard] Text written to clipboard\n");
+    }
+}
+
+void CheckAndFlushClipboard() {
+    if (!g_HasPendingText || !ENABLE_CLIPBOARD) return;
+
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastTextTime).count();
+
+    if (elapsed >= CLIPBOARD_TIMEOUT_MS) {
+        std::lock_guard<std::mutex> lock(g_ClipboardMutex);
+
+        if (!g_ClipboardBuffer.empty()) {
+            WriteToClipboard(g_ClipboardBuffer);
+            g_ClipboardBuffer.clear();
+            g_HasPendingText = false;
+        }
+    }
+}
+
+void AddTextToClipboard(const std::string& text) {
+    if (!ENABLE_CLIPBOARD || text.empty()) return;
+
+    std::lock_guard<std::mutex> lock(g_ClipboardMutex);
+
+    CheckAndFlushClipboard();
+
+    if (!g_ClipboardBuffer.empty()) {
+        g_ClipboardBuffer += "\n";
+    }
+    g_ClipboardBuffer += text;
+    g_LastTextTime = std::chrono::steady_clock::now();
+    g_HasPendingText = true;
+}
+
 std::string UTF32ToUTF8(const char32_t* utf32_str) {
     if (!utf32_str) return "";
 
@@ -84,21 +148,16 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
-// 从 GDScriptInstance 提取脚本路径
-// 根据注释: [[rdx+0x18]+0x3C0] 可获取脚本路径
 std::string GetScriptPath(const GDScriptInstance* instance) {
     if (!instance) return "[null_instance]";
 
     try {
-        // 读取 instance + 0x18
         void** ptr1 = (void**)((BYTE*)instance + 0x18);
         if (!ptr1 || !*ptr1) return "[null_ptr1]";
 
-        // 读取 [ptr1] + 0x3C0
         void** ptr2 = (void**)((BYTE*)*ptr1 + 0x3C0);
         if (!ptr2 || !*ptr2) return "[null_ptr2]";
 
-        // 假设路径是 UTF-32 字符串
         const char32_t* path = (const char32_t*)*ptr2;
         if (!path) return "[null_path]";
 
@@ -108,34 +167,28 @@ std::string GetScriptPath(const GDScriptInstance* instance) {
     }
 }
 
-// 检查规则是否匹配
 const HookRule* FindMatchingRule(const std::string& scriptPath, const std::string& functionName) {
     for (const auto& rule : g_HookRules) {
-        // 检查函数名是否匹配
         if (rule.functionName != functionName) {
             continue;
         }
 
-        // 如果规则指定了路径，检查路径是否匹配
         if (!rule.scriptPath.empty()) {
             if (scriptPath.find(rule.scriptPath) == std::string::npos) {
-                continue;  // 路径不匹配
+                continue;
             }
         }
 
-        // 找到匹配的规则
         return &rule;
     }
 
-    return nullptr;  // 没有匹配的规则
+    return nullptr;
 }
 
-// 从 StringName 提取函数名
 std::string GetFunctionName(const StringName* p_method) {
     if (!p_method) return "[null]";
 
     try {
-        // 先尝试内置函数名 (0x8 偏移, UTF-8)
         if (p_method->builtin_str) {
             const char* builtin = (const char*)p_method->builtin_str;
             if (builtin && builtin[0] != '\0') {
@@ -143,7 +196,6 @@ std::string GetFunctionName(const StringName* p_method) {
             }
         }
 
-        // 再尝试自定义函数名 (0x10 偏移, UTF-32)
         if (p_method->custom_str) {
             const char32_t* custom = (const char32_t*)p_method->custom_str;
             if (custom && custom[0] != U'\0') {
@@ -157,17 +209,14 @@ std::string GetFunctionName(const StringName* p_method) {
     return "[unknown]";
 }
 
-// 从 Variant 提取字符串
 std::string ExtractStringFromVariant(const Variant* variant) {
     if (!variant) return "[null_variant]";
 
     try {
-        // 检查类型是否为 String (0x4)
         if (variant->type != 0x4) {
-            return "";  // 不是字符串类型，返回空
+            return "";
         }
 
-        // 提取 UTF-32 字符串数据 (0x8 偏移)
         if (variant->data) {
             const char32_t* str_data = (const char32_t*)variant->data;
             return UTF32ToUTF8(str_data);
@@ -179,10 +228,6 @@ std::string ExtractStringFromVariant(const Variant* variant) {
     return "";
 }
 
-// ==========================================
-// Detour 函数实现
-// ==========================================
-
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -192,24 +237,19 @@ Variant* __fastcall GDScriptCallp_Detour(
     CallError* r_error
 ) {
     try {
-        // 如果没有配置规则，直接返回
+        CheckAndFlushClipboard();
+
         if (g_HookRules.empty()) {
             return g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
         }
 
-        // 获取函数名
         std::string functionName = GetFunctionName(p_method);
-
-        // 获取脚本路径
         std::string scriptPath = GetScriptPath(thisptr);
-
-        // 查找匹配的规则
         const HookRule* rule = FindMatchingRule(scriptPath, functionName);
 
         if (rule) {
             char buffer[2048];
 
-            // 输出基本信息
             if (rule->scriptPath.empty()) {
                 sprintf_s(buffer, "[GDScript] Function: %s, ArgCount: %d\n", 
                          functionName.c_str(), p_argcount);
@@ -219,9 +259,7 @@ Variant* __fastcall GDScriptCallp_Detour(
             }
             OutputDebugStringA(buffer);
 
-            // 提取参数
             if (p_args && p_argcount > 0) {
-                // 如果规则指定了参数索引，只提取指定的
                 if (!rule->argIndices.empty()) {
                     for (int idx : rule->argIndices) {
                         if (idx >= 0 && idx < p_argcount && p_args[idx]) {
@@ -231,11 +269,11 @@ Variant* __fastcall GDScriptCallp_Detour(
                                 sprintf_s(buffer, "  [Arg %d] String: \"%s\"\n", 
                                          idx, strValue.c_str());
                                 OutputDebugStringA(buffer);
+                                AddTextToClipboard(strValue);
                             }
                         }
                     }
                 } else {
-                    // 否则提取所有字符串参数
                     for (int i = 0; i < p_argcount; i++) {
                         if (p_args[i]) {
                             std::string strValue = ExtractStringFromVariant(p_args[i]);
@@ -244,6 +282,7 @@ Variant* __fastcall GDScriptCallp_Detour(
                                 sprintf_s(buffer, "  [Arg %d] String: \"%s\"\n", 
                                          i, strValue.c_str());
                                 OutputDebugStringA(buffer);
+                                AddTextToClipboard(strValue);
                             }
                         }
                     }
@@ -254,25 +293,18 @@ Variant* __fastcall GDScriptCallp_Detour(
         OutputDebugStringA("[GDScript] Exception in detour function\n");
     }
 
-    // 调用原始函数
     return g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
 }
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
 
-    // 定义多组签名，优先级从上到下
     const char* signatures[] = {
-        // Godot 4.3.0 x64 MinGW64 (Self build godot.windows.template_release.x86_64.exe)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
-
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
-
     const char* targetModule = nullptr;
-
-    // 获取模块名用于日志输出
     const char* searchModuleName = targetModule;
     char mainModuleName[MAX_PATH];
 
@@ -287,7 +319,6 @@ bool SetupAllHooks() {
         OutputDebugStringA(infoBuffer);
     }
 
-    // 尝试所有签名
     void* targetAddr = nullptr;
     int usedSignatureIndex = -1;
 
@@ -301,30 +332,27 @@ bool SetupAllHooks() {
         if (targetAddr) {
             usedSignatureIndex = i;
             char successBuffer[512];
-            sprintf_s(successBuffer, "[Hook] ✓ Found target function using signature #%d at: 0x%p\n", 
+            sprintf_s(successBuffer, "[Hook] Found target function using signature #%d at: 0x%p\n", 
                      i + 1, targetAddr);
             OutputDebugStringA(successBuffer);
             break;
         } else {
             char failBuffer[256];
-            sprintf_s(failBuffer, "[Hook] ✗ Signature #%d not found, trying next...\n", i + 1);
+            sprintf_s(failBuffer, "[Hook] Signature #%d not found, trying next...\n", i + 1);
             OutputDebugStringA(failBuffer);
         }
     }
 
-    // 如果所有签名都失败
     if (!targetAddr) {
         char errorBuffer[512];
-        sprintf_s(errorBuffer, "[Hook] ✗ Failed to find target function after trying all %d signatures in module: %s\n", 
+        sprintf_s(errorBuffer, "[Hook] Failed to find target function after trying all %d signatures in module: %s\n", 
                  signatureCount, searchModuleName);
         OutputDebugStringA(errorBuffer);
-        OutputDebugStringA("[Hook] Tip: Check if signatures are correct or set 'targetModule' to the correct module name\n");
         return false;
     }
 
     g_OriginalGDScriptCallp = (GDScriptCallp_t)targetAddr;
 
-    // 附加 Detour
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
 
@@ -337,12 +365,11 @@ bool SetupAllHooks() {
         return false;
     }
 
-    OutputDebugStringA("[Hook] ✓ Target function hooked successfully!\n");
+    OutputDebugStringA("[Hook] Target function hooked successfully!\n");
     OutputDebugStringA("[Hook] All hooks set up successfully\n");
 
-    // 输出监控配置
     if (g_HookRules.empty()) {
-        OutputDebugStringA("[Hook] ⚠ No hook rules configured. Nothing will be monitored.\n");
+        OutputDebugStringA("[Hook] No hook rules configured. Nothing will be monitored.\n");
     } else {
         char configBuffer[512];
         sprintf_s(configBuffer, "[Hook] Loaded %zu hook rule(s):\n", g_HookRules.size());
@@ -382,16 +409,24 @@ bool SetupAllHooks() {
 void CleanupAllHooks() {
     OutputDebugStringA("[Hook] Cleaning up hooks...\n");
 
-    // 分离 GDScriptCallp hook
+    if (g_HasPendingText && ENABLE_CLIPBOARD) {
+        std::lock_guard<std::mutex> lock(g_ClipboardMutex);
+        if (!g_ClipboardBuffer.empty()) {
+            WriteToClipboard(g_ClipboardBuffer);
+            g_ClipboardBuffer.clear();
+            g_HasPendingText = false;
+        }
+    }
+
     if (g_OriginalGDScriptCallp) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
         DetourDetach(&(PVOID&)g_OriginalGDScriptCallp, GDScriptCallp_Detour);
 
         if (DetourTransactionCommit() == NO_ERROR) {
-            OutputDebugStringA("[Hook] ✓ GDScriptCallp detached successfully\n");
+            OutputDebugStringA("[Hook] GDScriptCallp detached successfully\n");
         } else {
-            OutputDebugStringA("[Hook] ✗ Failed to detach GDScriptCallp\n");
+            OutputDebugStringA("[Hook] Failed to detach GDScriptCallp\n");
         }
 
         g_OriginalGDScriptCallp = nullptr;
