@@ -226,8 +226,10 @@ bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
 
     const char* signatures[] = {
-		// godot 4.3.1 x64 self-build (non-optimized)
+		// godot 4.3.1 x64 self-build (non-optimized) (mingw64)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
+        // godot 4.3.0 x64 (mingw64)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72"
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
