@@ -1,28 +1,17 @@
 #include "pch.h"
 #include "hooks.h"
+#include "utils.h"
 #include <string>
 #include <set>
 #include <vector>
 #include <mutex>
 #include <chrono>
 
-constexpr bool ENABLE_CLIPBOARD = true;
-constexpr int CLIPBOARD_TIMEOUT_MS = 1000;
+constexpr bool ENABLE_CLIPBOARD = false;
+constexpr int CLIPBOARD_TIMEOUT_MS = 300;
 
 std::vector<HookRule> g_HookRules = {
-    // 示例 1: 只监控函数名，不限制路径，提取所有字符串参数
-    // HookRule("print"),
-
-    // 示例 2: 监控函数名，只提取指定索引的参数
-    // HookRule("my_function", {0, 2}),  // 只提取第 0 和第 2 个参数
-
-    // 示例 3: 限制脚本路径 + 函数名 + 参数索引
-    // HookRule("res://scripts/player.gd", "take_damage", {0}),  // 只监控 player.gd 中的 take_damage 函数的第 0 个参数
-
-    // 示例 4: 多个规则
-    // HookRule("print"),
-    // HookRule("push_warning", {0}),
-    // HookRule("res://scripts/game_manager.gd", "log_event", {0, 1}),
+    HookRule("_mark_as_read"),
 };
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
@@ -32,7 +21,7 @@ std::string g_ClipboardBuffer;
 std::chrono::steady_clock::time_point g_LastTextTime;
 bool g_HasPendingText = false;
 
-__declspec(dllexport) __declspec(noinline) void ProcessTextForClipboard(const char* text) {
+extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
     if (!text) return;
 
     volatile int dummy = 0;
@@ -46,32 +35,52 @@ __declspec(dllexport) __declspec(noinline) void ProcessTextForClipboard(const ch
 }
 
 void WriteToClipboard(const std::string& text) {
-    if (text.empty() || !ENABLE_CLIPBOARD) return;
+    if (text.empty()) return;
 
-    ProcessTextForClipboard(text.c_str());
-
-    if (OpenClipboard(NULL)) {
-        EmptyClipboard();
-
-        size_t size = (text.length() + 1) * sizeof(char);
-        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, size);
-
-        if (hMem) {
-            char* pMem = (char*)GlobalLock(hMem);
-            if (pMem) {
-                memcpy(pMem, text.c_str(), size);
-                GlobalUnlock(hMem);
-                SetClipboardData(CF_TEXT, hMem);
-            }
-        }
-
-        CloseClipboard();
-        OutputDebugStringA("[Clipboard] Text written to clipboard\n");
+    int wideSize = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
+    if (wideSize <= 0) {
+        OutputDebugStringA("[Clipboard] Failed to convert UTF-8 to UTF-16\n");
+        return;
     }
+
+    std::vector<wchar_t> wideText(wideSize);
+    if (MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, wideText.data(), wideSize) <= 0) {
+        OutputDebugStringA("[Clipboard] UTF-8 to UTF-16 conversion failed\n");
+        return;
+    }
+
+    if (!OpenClipboard(NULL)) {
+        OutputDebugStringA("[Clipboard] Failed to open clipboard\n");
+        return;
+    }
+
+    EmptyClipboard();
+
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, wideSize * sizeof(wchar_t));
+    if (hMem) {
+        wchar_t* pMem = (wchar_t*)GlobalLock(hMem);
+        if (pMem) {
+            memcpy(pMem, wideText.data(), wideSize * sizeof(wchar_t));
+            GlobalUnlock(hMem);
+
+            if (SetClipboardData(CF_UNICODETEXT, hMem)) {
+            } else {
+                GlobalFree(hMem);
+                OutputDebugStringA("[Clipboard] Failed to set clipboard data\n");
+            }
+        } else {
+            GlobalFree(hMem);
+            OutputDebugStringA("[Clipboard] Failed to lock global memory\n");
+        }
+    } else {
+        OutputDebugStringA("[Clipboard] Failed to allocate global memory\n");
+    }
+
+    CloseClipboard();
 }
 
 void CheckAndFlushClipboard() {
-    if (!g_HasPendingText || !ENABLE_CLIPBOARD) return;
+    if (!g_HasPendingText) return;
 
     auto now = std::chrono::steady_clock::now();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_LastTextTime).count();
@@ -80,7 +89,12 @@ void CheckAndFlushClipboard() {
         std::lock_guard<std::mutex> lock(g_ClipboardMutex);
 
         if (!g_ClipboardBuffer.empty()) {
-            WriteToClipboard(g_ClipboardBuffer);
+            hookme(g_ClipboardBuffer.c_str());
+
+            if (ENABLE_CLIPBOARD) {
+                WriteToClipboard(g_ClipboardBuffer);
+            }
+
             g_ClipboardBuffer.clear();
             g_HasPendingText = false;
         }
@@ -88,7 +102,7 @@ void CheckAndFlushClipboard() {
 }
 
 void AddTextToClipboard(const std::string& text) {
-    if (!ENABLE_CLIPBOARD || text.empty()) return;
+    if (text.empty()) return;
 
     std::lock_guard<std::mutex> lock(g_ClipboardMutex);
 
@@ -100,71 +114,6 @@ void AddTextToClipboard(const std::string& text) {
     g_ClipboardBuffer += text;
     g_LastTextTime = std::chrono::steady_clock::now();
     g_HasPendingText = true;
-}
-
-std::string UTF32ToUTF8(const char32_t* utf32_str) {
-    if (!utf32_str) return "";
-
-    try {
-        // 计算 UTF-32 字符串长度
-        size_t len = 0;
-        while (utf32_str[len] != U'\0') {
-            len++;
-        }
-
-        if (len == 0) return "";
-
-        // 先转为 UTF-16 (wchar_t)
-        std::wstring utf16;
-        utf16.reserve(len);
-
-        for (size_t i = 0; i < len; i++) {
-            char32_t ch = utf32_str[i];
-            if (ch <= 0xFFFF) {
-                // BMP 字符，直接转换
-                utf16 += (wchar_t)ch;
-            } else {
-                // 超出 BMP 范围，需要代理对
-                ch -= 0x10000;
-                utf16 += (wchar_t)((ch >> 10) + 0xD800);
-                utf16 += (wchar_t)((ch & 0x3FF) + 0xDC00);
-            }
-        }
-
-        // 使用 WideCharToMultiByte 转为 UTF-8
-        int size_needed = WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), (int)utf16.length(), 
-                                              NULL, 0, NULL, NULL);
-        if (size_needed <= 0) {
-            return "[UTF32->UTF8 Error]";
-        }
-
-        std::string utf8(size_needed, 0);
-        WideCharToMultiByte(CP_UTF8, 0, utf16.c_str(), (int)utf16.length(), 
-                           &utf8[0], size_needed, NULL, NULL);
-
-        return utf8;
-    } catch (...) {
-        return "[UTF32 Conversion Error]";
-    }
-}
-
-std::string GetScriptPath(const GDScriptInstance* instance) {
-    if (!instance) return "[null_instance]";
-
-    try {
-        void** ptr1 = (void**)((BYTE*)instance + 0x18);
-        if (!ptr1 || !*ptr1) return "[null_ptr1]";
-
-        void** ptr2 = (void**)((BYTE*)*ptr1 + 0x3C0);
-        if (!ptr2 || !*ptr2) return "[null_ptr2]";
-
-        const char32_t* path = (const char32_t*)*ptr2;
-        if (!path) return "[null_path]";
-
-        return UTF32ToUTF8(path);
-    } catch (...) {
-        return "[path_parse_error]";
-    }
 }
 
 const HookRule* FindMatchingRule(const std::string& scriptPath, const std::string& functionName) {
@@ -185,49 +134,6 @@ const HookRule* FindMatchingRule(const std::string& scriptPath, const std::strin
     return nullptr;
 }
 
-std::string GetFunctionName(const StringName* p_method) {
-    if (!p_method) return "[null]";
-
-    try {
-        if (p_method->builtin_str) {
-            const char* builtin = (const char*)p_method->builtin_str;
-            if (builtin && builtin[0] != '\0') {
-                return std::string(builtin);
-            }
-        }
-
-        if (p_method->custom_str) {
-            const char32_t* custom = (const char32_t*)p_method->custom_str;
-            if (custom && custom[0] != U'\0') {
-                return UTF32ToUTF8(custom);
-            }
-        }
-    } catch (...) {
-        return "[name_parse_error]";
-    }
-
-    return "[unknown]";
-}
-
-std::string ExtractStringFromVariant(const Variant* variant) {
-    if (!variant) return "[null_variant]";
-
-    try {
-        if (variant->type != 0x4) {
-            return "";
-        }
-
-        if (variant->data) {
-            const char32_t* str_data = (const char32_t*)variant->data;
-            return UTF32ToUTF8(str_data);
-        }
-    } catch (...) {
-        return "[variant_parse_error]";
-    }
-
-    return "";
-}
-
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -236,6 +142,8 @@ Variant* __fastcall GDScriptCallp_Detour(
     int p_argcount,
     CallError* r_error
 ) {
+    const HookRule* rule = nullptr;
+
     try {
         CheckAndFlushClipboard();
 
@@ -245,7 +153,7 @@ Variant* __fastcall GDScriptCallp_Detour(
 
         std::string functionName = GetFunctionName(p_method);
         std::string scriptPath = GetScriptPath(thisptr);
-        const HookRule* rule = FindMatchingRule(scriptPath, functionName);
+        rule = FindMatchingRule(scriptPath, functionName);
 
         if (rule) {
             char buffer[2048];
@@ -259,7 +167,7 @@ Variant* __fastcall GDScriptCallp_Detour(
             }
             OutputDebugStringA(buffer);
 
-            if (p_args && p_argcount > 0) {
+            if (p_args && p_argcount > 0 && !rule->postHook) {
                 if (!rule->argIndices.empty()) {
                     for (int idx : rule->argIndices) {
                         if (idx >= 0 && idx < p_argcount && p_args[idx]) {
@@ -293,13 +201,32 @@ Variant* __fastcall GDScriptCallp_Detour(
         OutputDebugStringA("[GDScript] Exception in detour function\n");
     }
 
-    return g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
+	Variant* result = g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
+
+	try {
+		if (rule && rule->postHook && result) {
+			std::string strValue = ExtractStringFromVariant(result);
+
+			if (!strValue.empty()) {
+				char buffer[2048];
+				sprintf_s(buffer, "  [Return] String: \"%s\"\n", strValue.c_str());
+				OutputDebugStringA(buffer);
+				AddTextToClipboard(strValue);
+			}
+		}
+	}
+	catch (...) {
+		OutputDebugStringA("[GDScript] Exception while intercepting return value\n");
+	}
+
+	return result;
 }
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
 
     const char* signatures[] = {
+		// godot 4.3.1 x64 self-build (non-optimized)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
     };
 
@@ -409,10 +336,15 @@ bool SetupAllHooks() {
 void CleanupAllHooks() {
     OutputDebugStringA("[Hook] Cleaning up hooks...\n");
 
-    if (g_HasPendingText && ENABLE_CLIPBOARD) {
+    if (g_HasPendingText) {
         std::lock_guard<std::mutex> lock(g_ClipboardMutex);
         if (!g_ClipboardBuffer.empty()) {
-            WriteToClipboard(g_ClipboardBuffer);
+            hookme(g_ClipboardBuffer.c_str());
+
+            if (ENABLE_CLIPBOARD) {
+                WriteToClipboard(g_ClipboardBuffer);
+            }
+
             g_ClipboardBuffer.clear();
             g_HasPendingText = false;
         }
