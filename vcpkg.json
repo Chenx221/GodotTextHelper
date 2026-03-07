@@ -1,0 +1,8 @@
+{
+  "name": "godot-text-helper",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "nlohmann-json",
+    "detours"
+  ]
+}

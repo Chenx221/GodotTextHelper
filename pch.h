@@ -10,6 +10,7 @@
 // add headers that you want to pre-compile here
 #include "framework.h"
 #include <detours/detours.h>
+#include <nlohmann/json.hpp>
 #include <Psapi.h>
 #include <vector>
 #include <string>

@@ -1,18 +1,16 @@
 #include "pch.h"
+#include "config.h"
 #include "hooks.h"
 #include "utils.h"
 #include <string>
-#include <set>
 #include <vector>
 #include <mutex>
 #include <chrono>
 
-constexpr bool ENABLE_CLIPBOARD = false;
 constexpr int CLIPBOARD_TIMEOUT_MS = 300;
 
-std::vector<HookRule> g_HookRules = {
-    HookRule("_mark_as_read"),
-};
+bool g_EnableClipboard = false;
+std::vector<HookRule> g_HookRules;
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
 
@@ -35,7 +33,7 @@ extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* te
     }
 }
 
-void WriteToClipboard(const std::string& text) {
+static void WriteToClipboard(const std::string& text) {
     if (text.empty()) return;
 
     int wideSize = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), -1, NULL, 0);
@@ -80,7 +78,7 @@ void WriteToClipboard(const std::string& text) {
     CloseClipboard();
 }
 
-void CheckAndFlushClipboard() {
+static void CheckAndFlushClipboard() {
     if (!g_HasPendingText) return;
 
     auto now = std::chrono::steady_clock::now();
@@ -92,7 +90,7 @@ void CheckAndFlushClipboard() {
         if (!g_ClipboardBuffer.empty()) {
             hookme(g_ClipboardBuffer.c_str());
 
-            if (ENABLE_CLIPBOARD) {
+            if (g_EnableClipboard) {
                 WriteToClipboard(g_ClipboardBuffer);
             }
 
@@ -102,7 +100,7 @@ void CheckAndFlushClipboard() {
     }
 }
 
-void AddTextToClipboard(const std::string& text) {
+static void AddTextToClipboard(const std::string& text) {
     if (text.empty()) return;
 
     std::lock_guard<std::mutex> lock(g_ClipboardMutex);
@@ -117,7 +115,7 @@ void AddTextToClipboard(const std::string& text) {
     g_HasPendingText = true;
 }
 
-const HookRule* FindMatchingRule(const std::string& scriptPath, const std::string& functionName) {
+static const HookRule* FindMatchingRule(const std::string& scriptPath, const std::string& functionName) {
     for (const auto& rule : g_HookRules) {
         if (rule.functionName != functionName) {
             continue;
@@ -225,6 +223,7 @@ Variant* __fastcall GDScriptCallp_Detour(
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
+    LoadConfiguration(g_EnableClipboard, g_HookRules);
 
     const char* signatures[] = {
 		// godot 4.3.1 x64 self-build (non-optimized) (mingw64)
@@ -344,7 +343,7 @@ void CleanupAllHooks() {
         if (!g_ClipboardBuffer.empty()) {
             hookme(g_ClipboardBuffer.c_str());
 
-            if (ENABLE_CLIPBOARD) {
+            if (g_EnableClipboard) {
                 WriteToClipboard(g_ClipboardBuffer);
             }
 
