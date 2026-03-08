@@ -3,6 +3,8 @@
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -26,17 +28,15 @@ namespace {
 			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
 			reinterpret_cast<LPCSTR>(&GetConfigPath),
 			&hModule)) {
-			return std::filesystem::path("dinput8.json");
+			return std::filesystem::path("config.json");
 		}
 
 		char modulePath[MAX_PATH] = {};
 		if (GetModuleFileNameA(hModule, modulePath, MAX_PATH) == 0) {
-			return std::filesystem::path("dinput8.json");
+			return std::filesystem::path("config.json");
 		}
 
-		std::filesystem::path configPath(modulePath);
-		configPath.replace_extension(".json");
-		return configPath;
+		return std::filesystem::path(modulePath).parent_path() / "config.json";
 	}
 
 	std::string GetDefaultConfigContent() {
@@ -44,10 +44,83 @@ namespace {
 			{ "clipboard", false },
 			{ "logFunctionName", false },
 			{ "filterDuplicateFunctionLog", false },
+			{ "gdscriptInstanceOffset", "0x18" },
+			{ "gdscriptPathOffset", "0x3C0" },
 			{ "rules", json::array() },
 			{ "builtinFunctionNameUTF32", false }
 		};
 		return defaultConfig.dump(4);
+	}
+
+	json GetDefaultConfigJson() {
+		return json::parse(GetDefaultConfigContent());
+	}
+
+	bool WriteConfigFile(const std::filesystem::path& configPath, const json& root) {
+		std::ofstream output(configPath);
+		if (!output.is_open()) {
+			char buffer[512];
+			sprintf_s(buffer, "[Config] Failed to write config file: %s\n", configPath.string().c_str());
+			OutputDebugStringA(buffer);
+			return false;
+		}
+
+		output << root.dump(4);
+		return true;
+	}
+
+	bool MergeMissingTopLevelDefaults(json& root) {
+		bool changed = false;
+		const json defaults = GetDefaultConfigJson();
+
+		for (auto it = defaults.begin(); it != defaults.end(); ++it) {
+			if (!root.contains(it.key())) {
+				root[it.key()] = it.value();
+				changed = true;
+			}
+		}
+
+		return changed;
+	}
+
+	bool ParseOffsetValue(const json& value, size_t& result, const char* fieldName, std::string& error) {
+		if (value.is_number_unsigned()) {
+			result = value.get<size_t>();
+			return true;
+		}
+
+		if (value.is_number_integer()) {
+			long long signedValue = value.get<long long>();
+			if (signedValue < 0) {
+				error = std::string(fieldName) + " must be non-negative";
+				return false;
+			}
+
+			result = static_cast<size_t>(signedValue);
+			return true;
+		}
+
+		if (value.is_string()) {
+			const std::string text = value.get<std::string>();
+			if (text.empty()) {
+				error = std::string(fieldName) + " must not be empty";
+				return false;
+			}
+
+			errno = 0;
+			char* end = nullptr;
+			unsigned long long parsed = std::strtoull(text.c_str(), &end, 0);
+			if (errno == ERANGE || end != text.c_str() + text.size()) {
+				error = std::string(fieldName) + " must be an integer or hex string";
+				return false;
+			}
+
+			result = static_cast<size_t>(parsed);
+			return true;
+		}
+
+		error = std::string(fieldName) + " must be an integer or string";
+		return false;
 	}
 
 	bool EnsureConfigFileExists(const std::filesystem::path& configPath) {
@@ -176,7 +249,7 @@ namespace {
 		return true;
 	}
 
-	bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, std::vector<HookRule>& hookRules, std::string& error) {
+	bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules, std::string& error) {
 		std::ifstream input(configPath);
 		if (!input.is_open()) {
 			error = "failed to open config file";
@@ -196,6 +269,8 @@ namespace {
 			error = "root must be a json object";
 			return false;
 		}
+
+		const bool addedMissingDefaults = MergeMissingTopLevelDefaults(root);
 
 		if (root.contains("clipboard")) {
 			if (!root["clipboard"].is_boolean()) {
@@ -232,6 +307,18 @@ namespace {
 			builtinFunctionNameUTF32 = root["builtinFunctionNameUTF32"].get<bool>();
 		}
 
+		if (root.contains("gdscriptInstanceOffset")) {
+			if (!ParseOffsetValue(root["gdscriptInstanceOffset"], gdscriptInstanceOffset, "gdscriptInstanceOffset", error)) {
+				return false;
+			}
+		}
+
+		if (root.contains("gdscriptPathOffset")) {
+			if (!ParseOffsetValue(root["gdscriptPathOffset"], gdscriptPathOffset, "gdscriptPathOffset", error)) {
+				return false;
+			}
+		}
+
 		if (root.contains("rules")) {
 			if (!root["rules"].is_array()) {
 				error = "rules must be an array";
@@ -254,10 +341,19 @@ namespace {
 
 		for (auto it = root.begin(); it != root.end(); ++it) {
 			const std::string key = ToLowerString(it.key());
-			if (key != "clipboard" && key != "logfunctionname" && key != "filterduplicatefunctionlog" && key != "rules" && key != "builtinfunctionnameutf32") {
+			if (key != "clipboard" && key != "logfunctionname" && key != "filterduplicatefunctionlog" && key != "gdscriptinstanceoffset" && key != "gdscriptpathoffset" && key != "rules" && key != "builtinfunctionnameutf32") {
 				error = "unknown top-level field: " + it.key();
 				return false;
 			}
+		}
+
+		if (addedMissingDefaults) {
+			if (!WriteConfigFile(configPath, root)) {
+				error = "failed to update config file with missing defaults";
+				return false;
+			}
+
+			OutputDebugStringA("[Config] Added missing default config fields\n");
 		}
 
 		return true;
@@ -265,11 +361,13 @@ namespace {
 
 }
 
-bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, std::vector<HookRule>& hookRules) {
+bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules) {
 	enableClipboard = false;
 	enableFunctionLog = false;
 	filterDuplicateFunctionLog = false;
 	builtinFunctionNameUTF32 = false;
+	gdscriptInstanceOffset = 0x18;
+	gdscriptPathOffset = 0x3C0;
 	hookRules.clear();
 
 	const std::filesystem::path configPath = GetConfigPath();
@@ -278,7 +376,7 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 	}
 
 	std::string error;
-	if (!TryLoadConfigurationJson(configPath, enableClipboard, enableFunctionLog, filterDuplicateFunctionLog, builtinFunctionNameUTF32, hookRules, error)) {
+	if (!TryLoadConfigurationJson(configPath, enableClipboard, enableFunctionLog, filterDuplicateFunctionLog, builtinFunctionNameUTF32, gdscriptInstanceOffset, gdscriptPathOffset, hookRules, error)) {
 		char buffer[1024];
 		sprintf_s(buffer, "[Config] Invalid json config: %s\n", error.c_str());
 		OutputDebugStringA(buffer);
@@ -287,16 +385,20 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 		enableFunctionLog = false;
 		filterDuplicateFunctionLog = false;
 		builtinFunctionNameUTF32 = false;
+		gdscriptInstanceOffset = 0x18;
+		gdscriptPathOffset = 0x3C0;
 		hookRules.clear();
 		return false;
 	}
 
 	char buffer[512];
-	sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, logFunctionName=%s, filterDuplicateFunctionLog=%s, builtinFunctionNameUTF32=%s, rules=%zu\n",
+	sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, logFunctionName=%s, filterDuplicateFunctionLog=%s, builtinFunctionNameUTF32=%s, gdscriptInstanceOffset=0x%zX, gdscriptPathOffset=0x%zX, rules=%zu\n",
 		enableClipboard ? "on" : "off",
 		enableFunctionLog ? "on" : "off",
 		filterDuplicateFunctionLog ? "on" : "off",
 		builtinFunctionNameUTF32 ? "on" : "off",
+		gdscriptInstanceOffset,
+		gdscriptPathOffset,
 		hookRules.size());
 	OutputDebugStringA(buffer);
 	return true;

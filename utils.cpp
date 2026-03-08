@@ -43,15 +43,15 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
-// helper: GDScript::get_script_path
+// helper: GDScriptInstance::get_script/GDScript::get_script_path
 std::string GetScriptPath(const GDScriptInstance* instance) {
     if (!instance) return "[null_instance]";
 
     try {
-        void** ptr1 = (void**)((BYTE*)instance + 0x18);
+        void** ptr1 = (void**)((BYTE*)instance + g_gdscriptInstanceOffset);
         if (!ptr1 || !*ptr1) return "[null_ptr1]";
 
-        void** ptr2 = (void**)((BYTE*)*ptr1 + 0x3C0);
+        void** ptr2 = (void**)((BYTE*)*ptr1 + g_gdscriptPathOffset);
         if (!ptr2 || !*ptr2) return "[null_ptr2]";
 
         const char32_t* path = (const char32_t*)*ptr2;

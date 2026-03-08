@@ -16,6 +16,8 @@ bool g_EnableClipboard = false;
 bool g_EnableFunctionLog = false;
 bool g_FilterDuplicateFunctionLog = false;
 bool g_builtinFunctionNameUTF32 = false;
+size_t g_gdscriptInstanceOffset = 0x18;
+size_t g_gdscriptPathOffset = 0x3C0;
 std::vector<HookRule> g_HookRules;
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
@@ -28,7 +30,7 @@ bool g_HasPendingText = false;
 std::mutex g_FunctionLogMutex;
 std::set<std::string> g_LoggedFunctionNames;
 
-// HS65001#-1C@0:dinput8.dll:hookme
+// HS65001#-1C@0:version.dll:hookme
 extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
     if (!text) return;
 
@@ -156,9 +158,7 @@ static std::filesystem::path GetFunctionLogPath() {
         return std::filesystem::path("function.log");
     }
 
-    std::filesystem::path logPath(modulePath);
-    logPath.replace_extension(".log");
-    return logPath;
+    return std::filesystem::path(modulePath).parent_path() / "function.log";
 }
 
 static void LogFunctionName(const std::string& functionName) {
@@ -257,7 +257,7 @@ Variant* __fastcall GDScriptCallp_Detour(
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
-    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_HookRules);
+    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_gdscriptInstanceOffset, g_gdscriptPathOffset, g_HookRules);
 
     {
         std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
@@ -265,11 +265,17 @@ bool SetupAllHooks() {
     }
 
     const char* signatures[] = {
+        // godot 4.5.1 x64 (official)
+        "41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B 5A",
+
         // godot 4.7-dev2 x64 (official)
         // godot 4.6.1 x64 (official)
+        // godot 4.6 x64 (official)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 4C 8B B4 24",
+
 		// godot 4.3.1 x64 self-build (non-optimized)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
+
         // godot 4.3.0 x64
         "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72"
     };
