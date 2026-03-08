@@ -11,3 +11,10 @@
 "gdscriptPathOffset": "0x350",
 ```
 
+// godot 4.5.1 x64 (official)
+
+```json
+"builtinFunctionNameUTF32": true,
+"gdscriptPathOffset": "0x390",
+```
+
