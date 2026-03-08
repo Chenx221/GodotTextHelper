@@ -266,6 +266,7 @@ bool SetupAllHooks() {
 
     const char* signatures[] = {
         // godot 4.5.1 x64 (official)
+        // godot 4.5 x64 (official)
         "41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B 5A",
 
         // godot 4.7-dev2 x64 (official)

@@ -43,7 +43,8 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
-// helper: GDScriptInstance::get_script/GDScript::get_script_path
+// 请参考readme.md进行配置
+// 未记录的版本请自行IDA GDScriptInstance::get_script/GDScript::get_script_path
 std::string GetScriptPath(const GDScriptInstance* instance) {
     if (!instance) return "[null_instance]";
 
