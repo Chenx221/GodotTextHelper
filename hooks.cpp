@@ -6,10 +6,16 @@
 #include <vector>
 #include <mutex>
 #include <chrono>
+#include <set>
+#include <filesystem>
+#include <fstream>
 
 constexpr int CLIPBOARD_TIMEOUT_MS = 300;
 
 bool g_EnableClipboard = false;
+bool g_EnableFunctionLog = false;
+bool g_FilterDuplicateFunctionLog = false;
+bool g_builtinFunctionNameUTF32 = false;
 std::vector<HookRule> g_HookRules;
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
@@ -18,6 +24,9 @@ std::mutex g_ClipboardMutex;
 std::string g_ClipboardBuffer;
 std::chrono::steady_clock::time_point g_LastTextTime;
 bool g_HasPendingText = false;
+
+std::mutex g_FunctionLogMutex;
+std::set<std::string> g_LoggedFunctionNames;
 
 // HS65001#-1C@0:dinput8.dll:hookme
 extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
@@ -133,6 +142,46 @@ static const HookRule* FindMatchingRule(const std::string& scriptPath, const std
     return nullptr;
 }
 
+static std::filesystem::path GetFunctionLogPath() {
+    HMODULE hModule = nullptr;
+    if (!GetModuleHandleExA(
+            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            reinterpret_cast<LPCSTR>(&GetFunctionLogPath),
+            &hModule)) {
+        return std::filesystem::path("function.log");
+    }
+
+    char modulePath[MAX_PATH] = {};
+    if (GetModuleFileNameA(hModule, modulePath, MAX_PATH) == 0) {
+        return std::filesystem::path("function.log");
+    }
+
+    std::filesystem::path logPath(modulePath);
+    logPath.replace_extension(".log");
+    return logPath;
+}
+
+static void LogFunctionName(const std::string& functionName) {
+    if (functionName.empty()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
+
+    if (g_FilterDuplicateFunctionLog) {
+        if (!g_LoggedFunctionNames.insert(functionName).second) {
+            return;
+        }
+    }
+
+    std::ofstream output(GetFunctionLogPath(), std::ios::app);
+    if (!output.is_open()) {
+        return;
+    }
+
+    output << functionName << '\n';
+}
+
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -146,26 +195,20 @@ Variant* __fastcall GDScriptCallp_Detour(
     try {
         CheckAndFlushClipboard();
 
+        std::string functionName = GetFunctionName(p_method);
+
+        if (g_EnableFunctionLog) {
+            LogFunctionName(functionName);
+        }
+
         if (g_HookRules.empty()) {
             return g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
         }
 
-        std::string functionName = GetFunctionName(p_method);
         std::string scriptPath = GetScriptPath(thisptr);
         rule = FindMatchingRule(scriptPath, functionName);
 
         if (rule) {
-            char buffer[2048];
-
-            if (rule->scriptPath.empty()) {
-                sprintf_s(buffer, "[GDScript] Function: %s, ArgCount: %d\n", 
-                         functionName.c_str(), p_argcount);
-            } else {
-                sprintf_s(buffer, "[GDScript] Path: %s\n  Function: %s, ArgCount: %d\n", 
-                         scriptPath.c_str(), functionName.c_str(), p_argcount);
-            }
-            OutputDebugStringA(buffer);
-
             if (p_args && p_argcount > 0 && !rule->postHook) {
                 if (!rule->argIndices.empty()) {
                     for (int idx : rule->argIndices) {
@@ -173,9 +216,6 @@ Variant* __fastcall GDScriptCallp_Detour(
                             std::string strValue = ExtractStringFromVariant(p_args[idx]);
 
                             if (!strValue.empty()) {
-                                sprintf_s(buffer, "  [Arg %d] String: \"%s\"\n", 
-                                         idx, strValue.c_str());
-                                OutputDebugStringA(buffer);
                                 AddTextToClipboard(strValue);
                             }
                         }
@@ -186,9 +226,6 @@ Variant* __fastcall GDScriptCallp_Detour(
                             std::string strValue = ExtractStringFromVariant(p_args[i]);
 
                             if (!strValue.empty()) {
-                                sprintf_s(buffer, "  [Arg %d] String: \"%s\"\n", 
-                                         i, strValue.c_str());
-                                OutputDebugStringA(buffer);
                                 AddTextToClipboard(strValue);
                             }
                         }
@@ -207,9 +244,6 @@ Variant* __fastcall GDScriptCallp_Detour(
 			std::string strValue = ExtractStringFromVariant(result);
 
 			if (!strValue.empty()) {
-				char buffer[2048];
-				sprintf_s(buffer, "  [Return] String: \"%s\"\n", strValue.c_str());
-				OutputDebugStringA(buffer);
 				AddTextToClipboard(strValue);
 			}
 		}
@@ -223,12 +257,20 @@ Variant* __fastcall GDScriptCallp_Detour(
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
-    LoadConfiguration(g_EnableClipboard, g_HookRules);
+    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_HookRules);
+
+    {
+        std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
+        g_LoggedFunctionNames.clear();
+    }
 
     const char* signatures[] = {
-		// godot 4.3.1 x64 self-build (non-optimized) (mingw64)
+        // godot 4.7-dev2 x64 (official)
+        // godot 4.6.1 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 4C 8B B4 24",
+		// godot 4.3.1 x64 self-build (non-optimized)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
-        // godot 4.3.0 x64 (mingw64)
+        // godot 4.3.0 x64
         "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72"
     };
 
@@ -337,6 +379,11 @@ bool SetupAllHooks() {
 
 void CleanupAllHooks() {
     OutputDebugStringA("[Hook] Cleaning up hooks...\n");
+
+    {
+        std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
+        g_LoggedFunctionNames.clear();
+    }
 
     if (g_HasPendingText) {
         std::lock_guard<std::mutex> lock(g_ClipboardMutex);

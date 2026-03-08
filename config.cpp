@@ -11,254 +11,293 @@
 
 namespace {
 
-using json = nlohmann::json;
+	using json = nlohmann::json;
 
-std::string ToLowerString(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
+	std::string ToLowerString(std::string value) {
+		std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+			return static_cast<char>(std::tolower(ch));
+			});
+		return value;
+	}
+
+	std::filesystem::path GetConfigPath() {
+		HMODULE hModule = nullptr;
+		if (!GetModuleHandleExA(
+			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+			reinterpret_cast<LPCSTR>(&GetConfigPath),
+			&hModule)) {
+			return std::filesystem::path("dinput8.json");
+		}
+
+		char modulePath[MAX_PATH] = {};
+		if (GetModuleFileNameA(hModule, modulePath, MAX_PATH) == 0) {
+			return std::filesystem::path("dinput8.json");
+		}
+
+		std::filesystem::path configPath(modulePath);
+		configPath.replace_extension(".json");
+		return configPath;
+	}
+
+	std::string GetDefaultConfigContent() {
+		json defaultConfig = {
+			{ "clipboard", false },
+			{ "logFunctionName", false },
+			{ "filterDuplicateFunctionLog", false },
+			{ "rules", json::array() },
+			{ "builtinFunctionNameUTF32", false }
+		};
+		return defaultConfig.dump(4);
+	}
+
+	bool EnsureConfigFileExists(const std::filesystem::path& configPath) {
+		if (std::filesystem::exists(configPath)) {
+			return true;
+		}
+
+		std::ofstream output(configPath);
+		if (!output.is_open()) {
+			char buffer[512];
+			sprintf_s(buffer, "[Config] Failed to create config file: %s\n", configPath.string().c_str());
+			OutputDebugStringA(buffer);
+			return false;
+		}
+
+		output << GetDefaultConfigContent();
+		OutputDebugStringA("[Config] Created default json config file\n");
+		return true;
+	}
+
+	std::filesystem::path BuildBrokenConfigPath(const std::filesystem::path& configPath) {
+		std::filesystem::path brokenPath = configPath;
+		brokenPath += ".broken";
+
+		if (!std::filesystem::exists(brokenPath)) {
+			return brokenPath;
+		}
+
+		for (int index = 1; index < 1000; ++index) {
+			std::filesystem::path candidate = configPath;
+			candidate += ".broken." + std::to_string(index);
+			if (!std::filesystem::exists(candidate)) {
+				return candidate;
+			}
+		}
+
+		return brokenPath;
+	}
+
+	bool MoveBrokenConfig(const std::filesystem::path& configPath) {
+		std::error_code ec;
+		std::filesystem::path brokenPath = BuildBrokenConfigPath(configPath);
+		std::filesystem::rename(configPath, brokenPath, ec);
+		if (ec) {
+			char buffer[512];
+			sprintf_s(buffer, "[Config] Failed to rename broken config: %s\n", ec.message().c_str());
+			OutputDebugStringA(buffer);
+			return false;
+		}
+
+		char buffer[512];
+		sprintf_s(buffer, "[Config] Invalid config renamed to: %s\n", brokenPath.string().c_str());
+		OutputDebugStringA(buffer);
+		EnsureConfigFileExists(configPath);
+		return true;
+	}
+
+	bool ParseRuleJson(const json& ruleJson, HookRule& rule, std::string& error) {
+		if (!ruleJson.is_object()) {
+			error = "rule must be an object";
+			return false;
+		}
+
+		std::string scriptPath;
+		std::string functionName;
+		std::set<int> argIndices;
+		bool postHook = false;
+
+		if (!ruleJson.contains("function") || !ruleJson["function"].is_string()) {
+			error = "rule missing string function";
+			return false;
+		}
+
+		functionName = ruleJson["function"].get<std::string>();
+		if (functionName.empty()) {
+			error = "rule function is empty";
+			return false;
+		}
+
+		if (ruleJson.contains("script")) {
+			if (!ruleJson["script"].is_string()) {
+				error = "rule script must be a string";
+				return false;
+			}
+
+			scriptPath = ruleJson["script"].get<std::string>();
+		}
+
+		if (ruleJson.contains("args")) {
+			if (!ruleJson["args"].is_array()) {
+				error = "rule args must be an array";
+				return false;
+			}
+
+			for (const auto& argJson : ruleJson["args"]) {
+				if (!argJson.is_number_integer()) {
+					error = "rule args must contain integers";
+					return false;
+				}
+
+				argIndices.insert(argJson.get<int>());
+			}
+		}
+
+		if (ruleJson.contains("post")) {
+			if (!ruleJson["post"].is_boolean()) {
+				error = "rule post must be a boolean";
+				return false;
+			}
+
+			postHook = ruleJson["post"].get<bool>();
+		}
+
+		for (auto it = ruleJson.begin(); it != ruleJson.end(); ++it) {
+			const std::string key = ToLowerString(it.key());
+			if (key != "script" && key != "function" && key != "args" && key != "post") {
+				error = "unknown rule field";
+				return false;
+			}
+		}
+
+		rule = HookRule(functionName);
+		rule.scriptPath = scriptPath;
+		rule.argIndices = argIndices;
+		rule.postHook = postHook;
+		return true;
+	}
+
+	bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, std::vector<HookRule>& hookRules, std::string& error) {
+		std::ifstream input(configPath);
+		if (!input.is_open()) {
+			error = "failed to open config file";
+			return false;
+		}
+
+		json root;
+		try {
+			input >> root;
+		}
+		catch (const std::exception& ex) {
+			error = ex.what();
+			return false;
+		}
+
+		if (!root.is_object()) {
+			error = "root must be a json object";
+			return false;
+		}
+
+		if (root.contains("clipboard")) {
+			if (!root["clipboard"].is_boolean()) {
+				error = "clipboard must be a boolean";
+				return false;
+			}
+
+			enableClipboard = root["clipboard"].get<bool>();
+		}
+
+		if (root.contains("logFunctionName")) {
+			if (!root["logFunctionName"].is_boolean()) {
+				error = "logFunctionName must be a boolean";
+				return false;
+			}
+
+			enableFunctionLog = root["logFunctionName"].get<bool>();
+		}
+
+		if (root.contains("filterDuplicateFunctionLog")) {
+			if (!root["filterDuplicateFunctionLog"].is_boolean()) {
+				error = "filterDuplicateFunctionLog must be a boolean";
+				return false;
+			}
+
+			filterDuplicateFunctionLog = root["filterDuplicateFunctionLog"].get<bool>();
+		}
+
+		if (root.contains("builtinFunctionNameUTF32")) {
+			if (!root["builtinFunctionNameUTF32"].is_boolean()) {
+				error = "builtinFunctionNameUTF32 must be a boolean";
+				return false;
+			}
+			builtinFunctionNameUTF32 = root["builtinFunctionNameUTF32"].get<bool>();
+		}
+
+		if (root.contains("rules")) {
+			if (!root["rules"].is_array()) {
+				error = "rules must be an array";
+				return false;
+			}
+
+			int index = 0;
+			for (const auto& ruleJson : root["rules"]) {
+				++index;
+				HookRule rule("");
+				std::string ruleError;
+				if (!ParseRuleJson(ruleJson, rule, ruleError)) {
+					error = "invalid rule #" + std::to_string(index) + ": " + ruleError;
+					return false;
+				}
+
+				hookRules.push_back(rule);
+			}
+		}
+
+		for (auto it = root.begin(); it != root.end(); ++it) {
+			const std::string key = ToLowerString(it.key());
+			if (key != "clipboard" && key != "logfunctionname" && key != "filterduplicatefunctionlog" && key != "rules" && key != "builtinfunctionnameutf32") {
+				error = "unknown top-level field: " + it.key();
+				return false;
+			}
+		}
+
+		return true;
+	}
+
 }
 
-std::filesystem::path GetConfigPath() {
-    HMODULE hModule = nullptr;
-    if (!GetModuleHandleExA(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            reinterpret_cast<LPCSTR>(&GetConfigPath),
-            &hModule)) {
-        return std::filesystem::path("dinput8.json");
-    }
+bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF32, std::vector<HookRule>& hookRules) {
+	enableClipboard = false;
+	enableFunctionLog = false;
+	filterDuplicateFunctionLog = false;
+	builtinFunctionNameUTF32 = false;
+	hookRules.clear();
 
-    char modulePath[MAX_PATH] = {};
-    if (GetModuleFileNameA(hModule, modulePath, MAX_PATH) == 0) {
-        return std::filesystem::path("dinput8.json");
-    }
+	const std::filesystem::path configPath = GetConfigPath();
+	if (!EnsureConfigFileExists(configPath)) {
+		return false;
+	}
 
-    std::filesystem::path configPath(modulePath);
-    configPath.replace_extension(".json");
-    return configPath;
-}
+	std::string error;
+	if (!TryLoadConfigurationJson(configPath, enableClipboard, enableFunctionLog, filterDuplicateFunctionLog, builtinFunctionNameUTF32, hookRules, error)) {
+		char buffer[1024];
+		sprintf_s(buffer, "[Config] Invalid json config: %s\n", error.c_str());
+		OutputDebugStringA(buffer);
+		MoveBrokenConfig(configPath);
+		enableClipboard = false;
+		enableFunctionLog = false;
+		filterDuplicateFunctionLog = false;
+		builtinFunctionNameUTF32 = false;
+		hookRules.clear();
+		return false;
+	}
 
-std::string GetDefaultConfigContent() {
-    json defaultConfig = {
-        { "clipboard", false },
-        { "rules", json::array() }
-    };
-    return defaultConfig.dump(4);
-}
-
-bool EnsureConfigFileExists(const std::filesystem::path& configPath) {
-    if (std::filesystem::exists(configPath)) {
-        return true;
-    }
-
-    std::ofstream output(configPath);
-    if (!output.is_open()) {
-        char buffer[512];
-        sprintf_s(buffer, "[Config] Failed to create config file: %s\n", configPath.string().c_str());
-        OutputDebugStringA(buffer);
-        return false;
-    }
-
-    output << GetDefaultConfigContent();
-    OutputDebugStringA("[Config] Created default json config file\n");
-    return true;
-}
-
-std::filesystem::path BuildBrokenConfigPath(const std::filesystem::path& configPath) {
-    std::filesystem::path brokenPath = configPath;
-    brokenPath += ".broken";
-
-    if (!std::filesystem::exists(brokenPath)) {
-        return brokenPath;
-    }
-
-    for (int index = 1; index < 1000; ++index) {
-        std::filesystem::path candidate = configPath;
-        candidate += ".broken." + std::to_string(index);
-        if (!std::filesystem::exists(candidate)) {
-            return candidate;
-        }
-    }
-
-    return brokenPath;
-}
-
-bool MoveBrokenConfig(const std::filesystem::path& configPath) {
-    std::error_code ec;
-    std::filesystem::path brokenPath = BuildBrokenConfigPath(configPath);
-    std::filesystem::rename(configPath, brokenPath, ec);
-    if (ec) {
-        char buffer[512];
-        sprintf_s(buffer, "[Config] Failed to rename broken config: %s\n", ec.message().c_str());
-        OutputDebugStringA(buffer);
-        return false;
-    }
-
-    char buffer[512];
-    sprintf_s(buffer, "[Config] Invalid config renamed to: %s\n", brokenPath.string().c_str());
-    OutputDebugStringA(buffer);
-    EnsureConfigFileExists(configPath);
-    return true;
-}
-
-bool ParseRuleJson(const json& ruleJson, HookRule& rule, std::string& error) {
-    if (!ruleJson.is_object()) {
-        error = "rule must be an object";
-        return false;
-    }
-
-    std::string scriptPath;
-    std::string functionName;
-    std::set<int> argIndices;
-    bool postHook = false;
-
-    if (!ruleJson.contains("function") || !ruleJson["function"].is_string()) {
-        error = "rule missing string function";
-        return false;
-    }
-
-    functionName = ruleJson["function"].get<std::string>();
-    if (functionName.empty()) {
-        error = "rule function is empty";
-        return false;
-    }
-
-    if (ruleJson.contains("script")) {
-        if (!ruleJson["script"].is_string()) {
-            error = "rule script must be a string";
-            return false;
-        }
-
-        scriptPath = ruleJson["script"].get<std::string>();
-    }
-
-    if (ruleJson.contains("args")) {
-        if (!ruleJson["args"].is_array()) {
-            error = "rule args must be an array";
-            return false;
-        }
-
-        for (const auto& argJson : ruleJson["args"]) {
-            if (!argJson.is_number_integer()) {
-                error = "rule args must contain integers";
-                return false;
-            }
-
-            argIndices.insert(argJson.get<int>());
-        }
-    }
-
-    if (ruleJson.contains("post")) {
-        if (!ruleJson["post"].is_boolean()) {
-            error = "rule post must be a boolean";
-            return false;
-        }
-
-        postHook = ruleJson["post"].get<bool>();
-    }
-
-    for (auto it = ruleJson.begin(); it != ruleJson.end(); ++it) {
-        const std::string key = ToLowerString(it.key());
-        if (key != "script" && key != "function" && key != "args" && key != "post") {
-            error = "unknown rule field";
-            return false;
-        }
-    }
-
-    rule = HookRule(functionName);
-    rule.scriptPath = scriptPath;
-    rule.argIndices = argIndices;
-    rule.postHook = postHook;
-    return true;
-}
-
-bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, std::vector<HookRule>& hookRules, std::string& error) {
-    std::ifstream input(configPath);
-    if (!input.is_open()) {
-        error = "failed to open config file";
-        return false;
-    }
-
-    json root;
-    try {
-        input >> root;
-    } catch (const std::exception& ex) {
-        error = ex.what();
-        return false;
-    }
-
-    if (!root.is_object()) {
-        error = "root must be a json object";
-        return false;
-    }
-
-    if (root.contains("clipboard")) {
-        if (!root["clipboard"].is_boolean()) {
-            error = "clipboard must be a boolean";
-            return false;
-        }
-
-        enableClipboard = root["clipboard"].get<bool>();
-    }
-
-    if (root.contains("rules")) {
-        if (!root["rules"].is_array()) {
-            error = "rules must be an array";
-            return false;
-        }
-
-        int index = 0;
-        for (const auto& ruleJson : root["rules"]) {
-            ++index;
-            HookRule rule("");
-            std::string ruleError;
-            if (!ParseRuleJson(ruleJson, rule, ruleError)) {
-                error = "invalid rule #" + std::to_string(index) + ": " + ruleError;
-                return false;
-            }
-
-            hookRules.push_back(rule);
-        }
-    }
-
-    for (auto it = root.begin(); it != root.end(); ++it) {
-        const std::string key = ToLowerString(it.key());
-        if (key != "clipboard" && key != "rules") {
-            error = "unknown top-level field: " + it.key();
-            return false;
-        }
-    }
-
-    return true;
-}
-
-}
-
-bool LoadConfiguration(bool& enableClipboard, std::vector<HookRule>& hookRules) {
-    enableClipboard = false;
-    hookRules.clear();
-
-    const std::filesystem::path configPath = GetConfigPath();
-    if (!EnsureConfigFileExists(configPath)) {
-        return false;
-    }
-
-    std::string error;
-    if (!TryLoadConfigurationJson(configPath, enableClipboard, hookRules, error)) {
-        char buffer[1024];
-        sprintf_s(buffer, "[Config] Invalid json config: %s\n", error.c_str());
-        OutputDebugStringA(buffer);
-        MoveBrokenConfig(configPath);
-        enableClipboard = false;
-        hookRules.clear();
-        return false;
-    }
-
-    char buffer[512];
-    sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, rules=%zu\n",
-        enableClipboard ? "on" : "off",
-        hookRules.size());
-    OutputDebugStringA(buffer);
-    return true;
+	char buffer[512];
+	sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, logFunctionName=%s, filterDuplicateFunctionLog=%s, builtinFunctionNameUTF32=%s, rules=%zu\n",
+		enableClipboard ? "on" : "off",
+		enableFunctionLog ? "on" : "off",
+		filterDuplicateFunctionLog ? "on" : "off",
+		builtinFunctionNameUTF32 ? "on" : "off",
+		hookRules.size());
+	OutputDebugStringA(buffer);
+	return true;
 }

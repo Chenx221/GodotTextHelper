@@ -66,6 +66,7 @@ typedef Variant* (__fastcall* GDScriptCallp_t)(
 );
 
 extern GDScriptCallp_t g_OriginalGDScriptCallp;
+extern bool g_builtinFunctionNameUTF32;
 
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,

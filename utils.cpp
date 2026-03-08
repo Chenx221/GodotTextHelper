@@ -43,6 +43,7 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
+// helper: GDScript::get_script_path
 std::string GetScriptPath(const GDScriptInstance* instance) {
     if (!instance) return "[null_instance]";
 
@@ -70,9 +71,16 @@ std::string GetFunctionName(const StringName* p_method) {
         if (!data) return "[null_data]";
         void** cname_ptr = (void**)((BYTE*)data + 0x8);
         if (cname_ptr && *cname_ptr) {
-            const char* cname = (const char*)*cname_ptr;
-            if (cname && cname[0] != '\0') {
-                return std::string(cname);
+            if (g_builtinFunctionNameUTF32) {
+                const char32_t* cname = (const char32_t*)*cname_ptr;
+                if (cname && cname[0] != U'\0') {
+                    return UTF32ToUTF8(cname);
+                }
+            } else {
+                const char* cname = (const char*)*cname_ptr;
+                if (cname && cname[0] != '\0') {
+                    return std::string(cname);
+                }
             }
         }
 
