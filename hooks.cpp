@@ -30,7 +30,7 @@ bool g_HasPendingText = false;
 std::mutex g_FunctionLogMutex;
 std::set<std::string> g_LoggedFunctionNames;
 
-// HS65001#-1C@0:version.dll:hookme
+// HS65001#-1C@0:winmm.dll:hookme
 extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
     if (!text) return;
 
@@ -269,16 +269,37 @@ bool SetupAllHooks() {
         // godot 4.5 x64 (official)
         "41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B 5A",
 
+        // godot 4.3.0 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72",
+
+		// godot 4.2.2 x64 (official)
+        // godot 4.2.1 x64 (official)
+        // godot 4.2 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 4C 8B B4 24 ?? ?? ?? ?? 4C 8B 62",
+
         // godot 4.7-dev2 x64 (official)
         // godot 4.6.1 x64 (official)
         // godot 4.6 x64 (official)
+        // godot 4.4.1 x64 (official)
+        // godot 4.4 x64 (official)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 4C 8B B4 24",
+
+		// godot 4.1.4 x64 (official)
+        // godot 4.1.3 x64 (official)
+        // godot 4.1.2 x64 (official)
+        // godot 4.1.1 x64 (official)
+        // godot 4.1 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 7A ?? 48 89 8C 24",
+
+		// godot 4.0.4 x64 (official)
+        // godot 4.0.3 x64 (official)
+        // godot 4.0.2 x64 (official)
+        // godot 4.0.1 x64 (official)
+        // godot 4.0 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 4C 8B 7A ?? 48 89 8C 24",
 
 		// godot 4.3.1 x64 self-build (non-optimized)
         "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
-
-        // godot 4.3.0 x64
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72"
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
