@@ -9,6 +9,8 @@
 #include <set>
 #include <filesystem>
 #include <fstream>
+#include <thread>
+#include <atomic>
 
 constexpr int CLIPBOARD_TIMEOUT_MS = 300;
 
@@ -29,6 +31,9 @@ bool g_HasPendingText = false;
 
 std::mutex g_FunctionLogMutex;
 std::set<std::string> g_LoggedFunctionNames;
+
+std::atomic<bool> g_ThreadRunning{false};
+std::thread g_ClipboardThread;
 
 // HS65001#-1C@0:winmm.dll:hookme
 extern "C" __declspec(dllexport) __declspec(noinline) void hookme(const char* text) {
@@ -115,8 +120,6 @@ static void AddTextToClipboard(const std::string& text) {
     if (text.empty()) return;
 
     std::lock_guard<std::mutex> lock(g_ClipboardMutex);
-
-    CheckAndFlushClipboard();
 
     if (!g_ClipboardBuffer.empty()) {
         g_ClipboardBuffer += "\n";
@@ -264,8 +267,16 @@ bool SetupAllHooks() {
         g_LoggedFunctionNames.clear();
     }
 
+    g_ThreadRunning = true;
+    g_ClipboardThread = std::thread([]() {
+        while (g_ThreadRunning) {
+            CheckAndFlushClipboard();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
     const char* signatures[] = {
-        
+
 
         // godot 3.6.3 x64 self-build (non-optimized)
         "48 89 5C 24 ?? 57 48 83 EC ?? 4C 8B 51 ?? 4D 8B D8"
@@ -376,6 +387,11 @@ bool SetupAllHooks() {
 
 void CleanupAllHooks() {
     OutputDebugStringA("[Hook] Cleaning up hooks...\n");
+
+    g_ThreadRunning = false;
+    if (g_ClipboardThread.joinable()) {
+        g_ClipboardThread.join();
+    }
 
     {
         std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
