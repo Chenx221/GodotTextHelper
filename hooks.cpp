@@ -15,12 +15,12 @@ constexpr int CLIPBOARD_TIMEOUT_MS = 300;
 bool g_EnableClipboard = false;
 bool g_EnableFunctionLog = false;
 bool g_FilterDuplicateFunctionLog = false;
-bool g_builtinFunctionNameUTF32 = false;
+bool g_builtinFunctionNameUTF16 = false;
 size_t g_gdscriptInstanceOffset = 0x18;
 size_t g_gdscriptPathOffset = 0x3C0;
 std::vector<HookRule> g_HookRules;
 
-GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
+GDScriptCall_t g_OriginalGDScriptCall = nullptr;
 
 std::mutex g_ClipboardMutex;
 std::string g_ClipboardBuffer;
@@ -182,9 +182,9 @@ static void LogFunctionName(const std::string& functionName) {
     output << functionName << '\n';
 }
 
-Variant* __fastcall GDScriptCallp_Detour(
-    Variant* retstr,
+Variant* __fastcall GDScriptCall_Detour(
     GDScriptInstance* thisptr,
+    Variant* retstr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,
@@ -202,7 +202,7 @@ Variant* __fastcall GDScriptCallp_Detour(
         }
 
         if (g_HookRules.empty()) {
-            return g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
+            return g_OriginalGDScriptCall(thisptr, retstr, p_method, p_args, p_argcount, r_error);
         }
 
         std::string scriptPath = GetScriptPath(thisptr);
@@ -237,7 +237,7 @@ Variant* __fastcall GDScriptCallp_Detour(
         OutputDebugStringA("[GDScript] Exception in detour function\n");
     }
 
-	Variant* result = g_OriginalGDScriptCallp(retstr, thisptr, p_method, p_args, p_argcount, r_error);
+	Variant* result = g_OriginalGDScriptCall(thisptr, retstr, p_method, p_args, p_argcount, r_error);
 
 	try {
 		if (rule && rule->postHook && result) {
@@ -257,7 +257,7 @@ Variant* __fastcall GDScriptCallp_Detour(
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
-    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_gdscriptInstanceOffset, g_gdscriptPathOffset, g_HookRules);
+    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF16, g_gdscriptInstanceOffset, g_gdscriptPathOffset, g_HookRules);
 
     {
         std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
@@ -265,41 +265,10 @@ bool SetupAllHooks() {
     }
 
     const char* signatures[] = {
-        // godot 4.5.1 x64 (official)
-        // godot 4.5 x64 (official)
-        "41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 48 8B 5A",
+        
 
-        // godot 4.3.0 x64 (official)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24 ?? ?? ?? ?? 4C 8B 72",
-
-		// godot 4.2.2 x64 (official)
-        // godot 4.2.1 x64 (official)
-        // godot 4.2 x64 (official)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 4C 8B B4 24 ?? ?? ?? ?? 4C 8B 62",
-
-        // godot 4.7-dev2 x64 (official)
-        // godot 4.6.1 x64 (official)
-        // godot 4.6 x64 (official)
-        // godot 4.4.1 x64 (official)
-        // godot 4.4 x64 (official)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? 4C 8B B4 24",
-
-		// godot 4.1.4 x64 (official)
-        // godot 4.1.3 x64 (official)
-        // godot 4.1.2 x64 (official)
-        // godot 4.1.1 x64 (official)
-        // godot 4.1 x64 (official)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 7A ?? 48 89 8C 24",
-
-		// godot 4.0.4 x64 (official)
-        // godot 4.0.3 x64 (official)
-        // godot 4.0.2 x64 (official)
-        // godot 4.0.1 x64 (official)
-        // godot 4.0 x64 (official)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 4C 8B 7A ?? 48 89 8C 24",
-
-		// godot 4.3.1 x64 self-build (non-optimized)
-        "41 57 41 56 41 55 41 54 55 57 56 53 48 83 EC ?? 48 8B 05 ?? ?? ?? ?? ?? ?? ?? 4C 8B A4 24",
+        // godot 3.6.3 x64 self-build (non-optimized)
+        "48 89 5C 24 ?? 57 48 83 EC ?? 4C 8B 51 ?? 4D 8B D8"
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
@@ -350,12 +319,12 @@ bool SetupAllHooks() {
         return false;
     }
 
-    g_OriginalGDScriptCallp = (GDScriptCallp_t)targetAddr;
+    g_OriginalGDScriptCall = (GDScriptCall_t)targetAddr;
 
     DetourTransactionBegin();
     DetourUpdateThread(GetCurrentThread());
 
-    LONG error = DetourAttach(&(PVOID&)g_OriginalGDScriptCallp, GDScriptCallp_Detour);
+    LONG error = DetourAttach(&(PVOID&)g_OriginalGDScriptCall, GDScriptCall_Detour);
 
     if (DetourTransactionCommit() != NO_ERROR) {
         char errorBuffer[256];
@@ -427,10 +396,10 @@ void CleanupAllHooks() {
         }
     }
 
-    if (g_OriginalGDScriptCallp) {
+    if (g_OriginalGDScriptCall) {
         DetourTransactionBegin();
         DetourUpdateThread(GetCurrentThread());
-        DetourDetach(&(PVOID&)g_OriginalGDScriptCallp, GDScriptCallp_Detour);
+        DetourDetach(&(PVOID&)g_OriginalGDScriptCall, GDScriptCall_Detour);
 
         if (DetourTransactionCommit() == NO_ERROR) {
             OutputDebugStringA("[Hook] GDScriptCallp detached successfully\n");
@@ -438,7 +407,7 @@ void CleanupAllHooks() {
             OutputDebugStringA("[Hook] Failed to detach GDScriptCallp\n");
         }
 
-        g_OriginalGDScriptCallp = nullptr;
+        g_OriginalGDScriptCall = nullptr;
     }
 
     OutputDebugStringA("[Hook] All hooks cleaned up\n");

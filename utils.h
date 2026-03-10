@@ -9,6 +9,9 @@ struct GDScriptInstance;
 // UTF-32 to UTF-8 conversion
 std::string UTF32ToUTF8(const char32_t* utf32_str);
 
+// UTF-16 to UTF-8 conversion
+std::string UTF16ToUTF8(const char16_t* utf16_str);
+
 // Get script path from GDScriptInstance
 std::string GetScriptPath(const GDScriptInstance* instance);
 

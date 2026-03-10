@@ -56,23 +56,23 @@ struct CallError {
     int expected;
 };
 
-typedef Variant* (__fastcall* GDScriptCallp_t)(
-    Variant* retstr,
+typedef Variant* (__fastcall* GDScriptCall_t)(
     GDScriptInstance* thisptr,
+    Variant* retstr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,
     CallError* r_error
 );
 
-extern GDScriptCallp_t g_OriginalGDScriptCallp;
-extern bool g_builtinFunctionNameUTF32;
+extern GDScriptCall_t g_OriginalGDScriptCall;
+extern bool g_builtinFunctionNameUTF16;
 extern size_t g_gdscriptInstanceOffset;
 extern size_t g_gdscriptPathOffset;
 
-Variant* __fastcall GDScriptCallp_Detour(
-    Variant* retstr,
+Variant* __fastcall GDScriptCall_Detour(
     GDScriptInstance* thisptr,
+    Variant* retstr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,

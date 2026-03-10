@@ -43,6 +43,33 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
+std::string UTF16ToUTF8(const char16_t* utf16_str) {
+    if (!utf16_str) return "";
+
+    try {
+        size_t len = 0;
+        while (utf16_str[len] != u'\0') {
+            len++;
+        }
+
+        if (len == 0) return "";
+
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, (LPCWCH)utf16_str, (int)len, 
+                                              NULL, 0, NULL, NULL);
+        if (size_needed <= 0) {
+            return "[UTF16->UTF8 Error]";
+        }
+
+        std::string utf8(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, (LPCWCH)utf16_str, (int)len, 
+                           &utf8[0], size_needed, NULL, NULL);
+
+        return utf8;
+    } catch (...) {
+        return "[UTF16 Conversion Error]";
+    }
+}
+
 // 请参考readme.md进行配置
 // 未记录的版本请自行IDA GDScriptInstance::get_script/GDScript::get_script_path
 std::string GetScriptPath(const GDScriptInstance* instance) {
@@ -55,10 +82,10 @@ std::string GetScriptPath(const GDScriptInstance* instance) {
         void** ptr2 = (void**)((BYTE*)*ptr1 + g_gdscriptPathOffset);
         if (!ptr2 || !*ptr2) return "[null_ptr2]";
 
-        const char32_t* path = (const char32_t*)*ptr2;
-        if (!path) return "[null_path]";
+            const char16_t* path = (const char16_t*)*ptr2;
+            if (!path) return "[null_path]";
 
-        return UTF32ToUTF8(path);
+            return UTF16ToUTF8(path);
     } catch (...) {
         return "[path_parse_error]";
     }
@@ -72,10 +99,10 @@ std::string GetFunctionName(const StringName* p_method) {
         if (!data) return "[null_data]";
         void** cname_ptr = (void**)((BYTE*)data + 0x8);
         if (cname_ptr && *cname_ptr) {
-            if (g_builtinFunctionNameUTF32) {
-                const char32_t* cname = (const char32_t*)*cname_ptr;
-                if (cname && cname[0] != U'\0') {
-                    return UTF32ToUTF8(cname);
+            if (g_builtinFunctionNameUTF16) {
+                const char16_t* cname = (const char16_t*)*cname_ptr;
+                if (cname && cname[0] != u'\0') {
+                    return UTF16ToUTF8(cname);
                 }
             } else {
                 const char* cname = (const char*)*cname_ptr;
@@ -87,11 +114,11 @@ std::string GetFunctionName(const StringName* p_method) {
 
         void** name_data_ptr = (void**)((BYTE*)data + 0x10);
         if (name_data_ptr && *name_data_ptr) {
-            const char32_t* name_str = (const char32_t*)*name_data_ptr;
-            if (name_str && name_str[0] != U'\0') {
-                return UTF32ToUTF8(name_str);
+                const char16_t* name_str = (const char16_t*)*name_data_ptr;
+                if (name_str && name_str[0] != u'\0') {
+                    return UTF16ToUTF8(name_str);
+                }
             }
-        }
     } catch (...) {
         return "[name_parse_error]";
     }
@@ -108,8 +135,8 @@ std::string ExtractStringFromVariant(const Variant* variant) {
         }
 
         if (variant->data) {
-            const char32_t* str_data = (const char32_t*)variant->data;
-            return UTF32ToUTF8(str_data);
+            const char16_t* str_data = (const char16_t*)variant->data;
+            return UTF16ToUTF8(str_data);
         }
     } catch (...) {
         return "[variant_parse_error]";
