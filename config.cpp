@@ -44,8 +44,8 @@ namespace {
 			{ "clipboard", false },
 			{ "logFunctionName", false },
 			{ "filterDuplicateFunctionLog", false },
-			{ "gdscriptInstanceOffset", "0x18" },
-			{ "gdscriptPathOffset", "0x3C0" },
+			{ "gdscriptInstanceOffset", "0x10" },
+			{ "gdscriptPathOffset", "0x250" },
 			{ "rules", json::array() },
 			{ "builtinFunctionNameUTF16", false }
 		};
@@ -366,8 +366,8 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 	enableFunctionLog = false;
 	filterDuplicateFunctionLog = false;
 	builtinFunctionNameUTF16 = false;
-	gdscriptInstanceOffset = 0x18;
-	gdscriptPathOffset = 0x3C0;
+	gdscriptInstanceOffset = 0x10;
+	gdscriptPathOffset = 0x250;
 	hookRules.clear();
 
 	const std::filesystem::path configPath = GetConfigPath();
@@ -385,8 +385,8 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 		enableFunctionLog = false;
 		filterDuplicateFunctionLog = false;
 		builtinFunctionNameUTF16 = false;
-		gdscriptInstanceOffset = 0x18;
-		gdscriptPathOffset = 0x3C0;
+		gdscriptInstanceOffset = 0x10;
+		gdscriptPathOffset = 0x250;
 		hookRules.clear();
 		return false;
 	}

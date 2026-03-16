@@ -18,8 +18,8 @@ bool g_EnableClipboard = false;
 bool g_EnableFunctionLog = false;
 bool g_FilterDuplicateFunctionLog = false;
 bool g_builtinFunctionNameUTF16 = false;
-size_t g_gdscriptInstanceOffset = 0x18;
-size_t g_gdscriptPathOffset = 0x3C0;
+size_t g_gdscriptInstanceOffset = 0x10;
+size_t g_gdscriptPathOffset = 0x250;
 std::vector<HookRule> g_HookRules;
 
 GDScriptCall_t g_OriginalGDScriptCall = nullptr;
