@@ -186,8 +186,8 @@ static void LogFunctionName(const std::string& functionName) {
 }
 
 Variant* __fastcall GDScriptCall_Detour(
-    GDScriptInstance* thisptr,
     Variant* retstr,
+    GDScriptInstance* thisptr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,
@@ -205,7 +205,7 @@ Variant* __fastcall GDScriptCall_Detour(
         }
 
         if (g_HookRules.empty()) {
-            return g_OriginalGDScriptCall(thisptr, retstr, p_method, p_args, p_argcount, r_error);
+            return g_OriginalGDScriptCall(retstr,thisptr,  p_method, p_args, p_argcount, r_error);
         }
 
         std::string scriptPath = GetScriptPath(thisptr);
@@ -240,7 +240,7 @@ Variant* __fastcall GDScriptCall_Detour(
         OutputDebugStringA("[GDScript] Exception in detour function\n");
     }
 
-	Variant* result = g_OriginalGDScriptCall(thisptr, retstr, p_method, p_args, p_argcount, r_error);
+	Variant* result = g_OriginalGDScriptCall(retstr, thisptr, p_method, p_args, p_argcount, r_error);
 
 	try {
 		if (rule && rule->postHook && result) {
@@ -276,7 +276,8 @@ bool SetupAllHooks() {
     });
 
     const char* signatures[] = {
-
+		// godot 3.7-dev1 x64 (official)
+        "57 56 53 48 83 EC ?? 4C 8B 5A",
 
         // godot 3.6.3 x64 self-build (non-optimized)
         "48 89 5C 24 ?? 57 48 83 EC ?? 4C 8B 51 ?? 4D 8B D8"

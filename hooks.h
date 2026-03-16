@@ -57,8 +57,8 @@ struct CallError {
 };
 
 typedef Variant* (__fastcall* GDScriptCall_t)(
-    GDScriptInstance* thisptr,
     Variant* retstr,
+    GDScriptInstance* thisptr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,
@@ -71,8 +71,8 @@ extern size_t g_gdscriptInstanceOffset;
 extern size_t g_gdscriptPathOffset;
 
 Variant* __fastcall GDScriptCall_Detour(
+	Variant* retstr,
     GDScriptInstance* thisptr,
-    Variant* retstr,
     const StringName* p_method,
     const Variant** p_args,
     int p_argcount,
