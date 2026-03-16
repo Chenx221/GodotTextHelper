@@ -278,9 +278,6 @@ bool SetupAllHooks() {
     const char* signatures[] = {
 		// godot 3.7-dev1 x64 (official)
         "57 56 53 48 83 EC ?? 4C 8B 5A",
-
-        // godot 3.6.3 x64 self-build (non-optimized)
-        "48 89 5C 24 ?? 57 48 83 EC ?? 4C 8B 51 ?? 4D 8B D8"
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
