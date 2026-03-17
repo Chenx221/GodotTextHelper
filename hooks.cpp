@@ -276,9 +276,10 @@ bool SetupAllHooks() {
     });
 
     const char* signatures[] = {
-
-
         // godot 3.6.3 x64 self-build (non-optimized)
+        // godot 3.0.2 x64 (official)
+        // godot 3.0.1 x64 (official)
+        // godot 3.0 x64 (official)
         "48 89 5C 24 ?? 57 48 83 EC ?? 4C 8B 51 ?? 4D 8B D8"
     };
 
