@@ -82,3 +82,6 @@ Leave as default
     "gdscriptPathOffset": "0x258",
 ```
 
+
+
+official版 >= 3.0 && <= 3.0.2 的看godot3r分支
