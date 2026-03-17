@@ -277,7 +277,44 @@ bool SetupAllHooks() {
 
     const char* signatures[] = {
 		// godot 3.7-dev1 x64 (official)
+        // godot 3.6.2 x64 (official)
+        // godot 3.6.1 x64 (official)
+        // godot 3.6 x64 (official)
         "57 56 53 48 83 EC ?? 4C 8B 5A",
+
+        // godot 3.5.3 x64 (official)
+        // godot 3.5.2 x64 (official)
+        // godot 3.5.1 x64 (official)
+        // godot 3.5 x64 (official)
+        // godot 3.4.5 x64 (official)
+        // godot 3.4.4 x64 (official)
+        // godot 3.4.3 x64 (official)
+        // godot 3.4.2 x64 (official)
+        // godot 3.4.1 x64 (official)
+        // godot 3.4 x64 (official)
+        // godot 3.3.4 x64 (official)
+        // godot 3.3.3 x64 (official)
+        // godot 3.3.2 x64 (official)
+        // godot 3.3.1 x64 (official)
+        // godot 3.3 x64 (official)
+        "41 54 48 83 EC ?? 4C 8B 52 ?? 49 89 CC 49 89 D3",
+
+        // godot 3.2.3 x64 (official)
+        // godot 3.2.2 x64 (official)
+        // godot 3.2.1 x64 (official)
+        // godot 3.2 x64 (official)
+        "41 54 48 83 EC ?? 49 89 CC 48 89 D1 48 8B 52",
+
+        // godot 3.1.2 x64 (official)
+        // godot 3.1.1 x64 (official)
+        // godot 3.1 x64 (official)
+        "56 53 48 83 EC ?? 48 8B 5A ?? 48 8B 84 24",
+
+        // godot 3.0.6 x64 (official)
+        // godot 3.0.5 x64 (official)
+        // godot 3.0.4 x64 (official)
+        // godot 3.0.3 x64 (official)
+        "57 56 53 48 83 EC ?? 48 8B 5A ?? 48 8B BC 24",
     };
 
     const int signatureCount = sizeof(signatures) / sizeof(signatures[0]);
