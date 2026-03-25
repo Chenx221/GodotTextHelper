@@ -84,3 +84,37 @@ Leave as default
 "gdscriptPathOffset": "0x3B8",
 ```
 
+
+
+---
+
+示例配置
+
+```
+
+{
+    "clipboard": false,
+    "logFunctionName": true,
+    "filterDuplicateFunctionLog": true,
+    "gdscriptInstanceOffset": "0x18",
+    "gdscriptPathOffset": "0x3C0",
+    "builtinFunctionNameUTF32": false,
+    "rules": [
+        {
+            "function": "add_text",
+            "script": "res://scripts/UI.gd",
+            "args": [0],
+            "post": false
+        },
+        {
+            "function": "say_dialog",
+            "args": [0, 1]
+        },
+        {
+            "function": "_on_battle_start",
+            "post": true
+        }
+    ]
+}
+```
+
