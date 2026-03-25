@@ -6,6 +6,7 @@
 #include <vector>
 #include <mutex>
 #include <chrono>
+#include <regex>
 #include <set>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,9 @@ bool g_builtinFunctionNameUTF32 = false;
 size_t g_gdscriptInstanceOffset = 0x18;
 size_t g_gdscriptPathOffset = 0x3C0;
 std::vector<HookRule> g_HookRules;
+std::string g_RegexFilter;
+static std::regex g_RegexFilterRegex;
+static bool g_HasRegexFilter = false;
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
 
@@ -119,12 +123,24 @@ static void CheckAndFlushClipboard() {
 static void AddTextToClipboard(const std::string& text) {
     if (text.empty()) return;
 
+    std::string processedText = text;
+
+    if (g_HasRegexFilter) {
+        try {
+            processedText = std::regex_replace(text, g_RegexFilterRegex, "");
+        }
+        catch (...) {
+            OutputDebugStringA("[Regex] Error during regex_replace\n");
+        }
+    }
+
+    if (processedText.empty()) return;
     std::lock_guard<std::mutex> lock(g_ClipboardMutex);
 
     if (!g_ClipboardBuffer.empty()) {
         g_ClipboardBuffer += "\n";
     }
-    g_ClipboardBuffer += text;
+    g_ClipboardBuffer += processedText;
     g_LastTextTime = std::chrono::steady_clock::now();
     g_HasPendingText = true;
 }
@@ -260,7 +276,17 @@ Variant* __fastcall GDScriptCallp_Detour(
 
 bool SetupAllHooks() {
     OutputDebugStringA("[Hook] Setting up hooks...\n");
-    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_gdscriptInstanceOffset, g_gdscriptPathOffset, g_HookRules);
+    LoadConfiguration(g_EnableClipboard, g_EnableFunctionLog, g_FilterDuplicateFunctionLog, g_builtinFunctionNameUTF32, g_gdscriptInstanceOffset, g_gdscriptPathOffset, g_HookRules, g_RegexFilter);
+
+    g_HasRegexFilter = false;
+    if (!g_RegexFilter.empty()) {
+        try {
+            g_RegexFilterRegex = std::regex(g_RegexFilter);
+            g_HasRegexFilter = true;
+        } catch (...) {
+            OutputDebugStringA("[Hook] Failed to compile regexFilter regex\n");
+        }
+    }
 
     {
         std::lock_guard<std::mutex> lock(g_FunctionLogMutex);
