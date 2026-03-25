@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "config.h"
 #include "hooks.h"
 #include "utils.h"
@@ -27,6 +27,14 @@ static std::regex g_RegexFilterRegex;
 static bool g_HasRegexFilter = false;
 
 GDScriptCallp_t g_OriginalGDScriptCallp = nullptr;
+
+typedef void(__fastcall* RichTextLabelAddText_t)(void* thisptr, const void* p_text);
+typedef void(__fastcall* GodotStringCtorFromUtf32_t)(void* thisptr, const char32_t* p_cstr);
+typedef void(__fastcall* GodotStringDtor_t)(void* thisptr);
+
+static RichTextLabelAddText_t g_OriginalRichTextLabelAddText = nullptr;
+static GodotStringCtorFromUtf32_t g_GodotStringCtorFromUtf32 = nullptr;
+static GodotStringDtor_t g_GodotStringDtor = nullptr;
 
 std::mutex g_ClipboardMutex;
 std::string g_ClipboardBuffer;
@@ -201,6 +209,157 @@ static void LogFunctionName(const std::string& functionName) {
     output << functionName << '\n';
 }
 
+static void* ResolveFirstRelCallTarget(const void* startAddress, size_t searchBytes) {
+    if (!startAddress || searchBytes < 5) {
+        return nullptr;
+    }
+
+    const unsigned char* code = (const unsigned char*)startAddress;
+    for (size_t i = 0; i + 4 < searchBytes; ++i) {
+        if (code[i] != 0xE8) {
+            continue;
+        }
+
+        int32_t rel = 0;
+        memcpy(&rel, code + i + 1, sizeof(rel));
+        const unsigned char* target = code + i + 5 + rel;
+        return (void*)target;
+    }
+
+    return nullptr;
+}
+
+static std::string TranslateRichTextLabelText(const std::string& inputText) {
+    // Translation pipeline placeholder. Keep original text for now.
+    return inputText;
+}
+
+void __fastcall RichTextLabelAddText_Detour(void* thisptr, const void* p_text) {
+    if (!g_OriginalRichTextLabelAddText) {
+        return;
+    }
+
+    try {
+        const std::string originalText = ExtractUtf8FromGodotString(p_text);
+        const std::u32string translatedTextUtf32 = U"测试中文";
+        const std::string translatedTextUtf8 = UTF32ToUTF8(translatedTextUtf32.c_str());
+
+        if (translatedTextUtf8 != originalText &&
+            g_GodotStringCtorFromUtf32 &&
+            g_GodotStringDtor) {
+            void* temp_godot_string = nullptr;
+            if (translatedTextUtf32.empty()) {
+                g_OriginalRichTextLabelAddText(thisptr, p_text);
+                return;
+            }
+
+            // 【修正 3】：传 &temp_godot_string 作为 this
+            // 构造函数会把生成的 CowData 地址写进 temp_godot_string
+            g_GodotStringCtorFromUtf32(&temp_godot_string, translatedTextUtf32.c_str());
+
+            // 调用原函数
+            g_OriginalRichTextLabelAddText(thisptr, &temp_godot_string);
+
+            // 析构
+            //g_GodotStringDtor(&temp_godot_string);
+            return;
+        }
+    } catch (...) {
+        OutputDebugStringA("[RichTextLabel] Exception in add_text detour\n");
+    }
+
+    g_OriginalRichTextLabelAddText(thisptr, p_text);
+}
+
+static void ResolveRichTextSupportFunctions(const char* moduleName) {
+    const char* stringCtorSignatures[] = {
+        // godot 4.6.1 x64 (official)
+        "53 48 83 EC ?? ?? ?? ?? 48 89 CB 45 85 C0 74",
+    };
+
+    const char* stringDtorSignatures[] = {
+        // godot 4.6.1 x64 (official) (xref)
+        "4C 8D 1D ?? ?? ?? ?? 45 31 C0 48 89 C2",
+    };
+
+    for (const char* signature : stringCtorSignatures) {
+        void* addr = FindPatternInModule(moduleName, signature);
+        if (addr) {
+            g_GodotStringCtorFromUtf32 = (GodotStringCtorFromUtf32_t)addr;
+            char info[256];
+            sprintf_s(info, "[RichTextLabel] String::String(const char32_t*) found at 0x%p\n", addr);
+            OutputDebugStringA(info);
+            break;
+        }
+    }
+
+    if (!g_GodotStringCtorFromUtf32) {
+        OutputDebugStringA("[RichTextLabel] String::String(const char32_t*) signature not found\n");
+    }
+
+    for (const char* signature : stringDtorSignatures) {
+        void* xrefAddr = FindPatternInModule(moduleName, signature);
+        if (!xrefAddr) {
+            continue;
+        }
+
+        void* dtorAddr = ResolveFirstRelCallTarget(xrefAddr, 0x80);
+        if (dtorAddr) {
+            g_GodotStringDtor = (GodotStringDtor_t)dtorAddr;
+            char info[256];
+            sprintf_s(info, "[RichTextLabel] String::~String resolved from xref 0x%p -> 0x%p\n", xrefAddr, dtorAddr);
+            OutputDebugStringA(info);
+            break;
+        }
+
+        char warn[256];
+        sprintf_s(warn, "[RichTextLabel] String::~String xref found at 0x%p but call target not resolved\n", xrefAddr);
+        OutputDebugStringA(warn);
+    }
+
+    if (!g_GodotStringDtor) {
+        OutputDebugStringA("[RichTextLabel] String::~String signature not found\n");
+    }
+}
+
+static void SetupRichTextLabelAddTextHook(const char* moduleName) {
+    const char* addTextSignatures[] = {
+        // godot 4.6.1 x64 (official)
+        "41 57 41 56 41 55 41 54 55 57 56 53 48 81 EC ?? ?? ?? ?? 0F 29 B4 24 ?? ?? ?? ?? 0F 29 BC 24 ?? ?? ?? ?? 44 0F 29 84 24 ?? ?? ?? ?? 48 89 CB 48 89 D6 80 B9",
+    };
+
+    void* targetAddr = nullptr;
+    for (const char* signature : addTextSignatures) {
+        targetAddr = FindPatternInModule(moduleName, signature);
+        if (targetAddr) {
+            break;
+        }
+    }
+
+    if (!targetAddr) {
+        OutputDebugStringA("[RichTextLabel] add_text signature not found\n");
+        return;
+    }
+
+    g_OriginalRichTextLabelAddText = (RichTextLabelAddText_t)targetAddr;
+
+    DetourTransactionBegin();
+    DetourUpdateThread(GetCurrentThread());
+    LONG error = DetourAttach(&(PVOID&)g_OriginalRichTextLabelAddText, RichTextLabelAddText_Detour);
+
+    if (DetourTransactionCommit() != NO_ERROR) {
+        char errorBuffer[256];
+        sprintf_s(errorBuffer, "[RichTextLabel] Failed to attach add_text detour. Error code: %ld\n", error);
+        OutputDebugStringA(errorBuffer);
+        g_OriginalRichTextLabelAddText = nullptr;
+        return;
+    }
+
+    char successBuffer[256];
+    sprintf_s(successBuffer, "[RichTextLabel] add_text hooked at 0x%p\n", targetAddr);
+    OutputDebugStringA(successBuffer);
+}
+
 Variant* __fastcall GDScriptCallp_Detour(
     Variant* retstr,
     GDScriptInstance* thisptr,
@@ -355,6 +514,9 @@ bool SetupAllHooks() {
         OutputDebugStringA(infoBuffer);
     }
 
+    ResolveRichTextSupportFunctions(searchModuleName);
+    SetupRichTextLabelAddTextHook(searchModuleName);
+
     void* targetAddr = nullptr;
     int usedSignatureIndex = -1;
 
@@ -444,6 +606,23 @@ bool SetupAllHooks() {
 
 void CleanupAllHooks() {
     OutputDebugStringA("[Hook] Cleaning up hooks...\n");
+
+    if (g_OriginalRichTextLabelAddText) {
+        DetourTransactionBegin();
+        DetourUpdateThread(GetCurrentThread());
+        DetourDetach(&(PVOID&)g_OriginalRichTextLabelAddText, RichTextLabelAddText_Detour);
+
+        if (DetourTransactionCommit() == NO_ERROR) {
+            OutputDebugStringA("[Hook] RichTextLabel.add_text detached successfully\n");
+        } else {
+            OutputDebugStringA("[Hook] Failed to detach RichTextLabel.add_text\n");
+        }
+
+        g_OriginalRichTextLabelAddText = nullptr;
+    }
+
+    g_GodotStringCtorFromUtf32 = nullptr;
+    g_GodotStringDtor = nullptr;
 
     g_ThreadRunning = false;
     if (g_ClipboardThread.joinable()) {

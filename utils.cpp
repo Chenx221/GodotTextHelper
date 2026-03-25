@@ -43,6 +43,44 @@ std::string UTF32ToUTF8(const char32_t* utf32_str) {
     }
 }
 
+std::u32string UTF8ToUTF32(const std::string& utf8Text) {
+    if (utf8Text.empty()) {
+        return {};
+    }
+
+    int wideSize = MultiByteToWideChar(CP_UTF8, 0, utf8Text.c_str(), -1, NULL, 0);
+    if (wideSize <= 0) {
+        return {};
+    }
+
+    std::vector<wchar_t> wideText((size_t)wideSize);
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8Text.c_str(), -1, wideText.data(), wideSize) <= 0) {
+        return {};
+    }
+
+    std::u32string utf32Text;
+    utf32Text.reserve((size_t)wideSize);
+
+    // On Windows, wchar_t is UTF-16.
+    for (size_t i = 0; i + 1 < wideText.size(); ++i) {
+        wchar_t w1 = wideText[i];
+        if (w1 >= 0xD800 && w1 <= 0xDBFF && i + 2 <= wideText.size()) {
+            wchar_t w2 = wideText[i + 1];
+            if (w2 >= 0xDC00 && w2 <= 0xDFFF) {
+                char32_t codepoint =
+                    0x10000 + (((char32_t)(w1 - 0xD800) << 10) | (char32_t)(w2 - 0xDC00));
+                utf32Text.push_back(codepoint);
+                ++i;
+                continue;
+            }
+        }
+
+        utf32Text.push_back((char32_t)w1);
+    }
+
+    return utf32Text;
+}
+
 // 请参考readme.md进行配置
 // 未记录的版本请自行IDA GDScriptInstance::get_script/GDScript::get_script_path
 std::string GetScriptPath(const GDScriptInstance* instance) {
@@ -116,6 +154,21 @@ std::string ExtractStringFromVariant(const Variant* variant) {
     }
 
     return "";
+}
+
+std::string ExtractUtf8FromGodotString(const void* godotString) {
+    if (!godotString) return "[null_godot_string]";
+
+    try {
+        // Godot String stores a pointer to UTF-32 data in versions targeted by this project.
+        const void* stringData = *(const void* const*)godotString;
+        if (!stringData) return "";
+
+        const char32_t* text = (const char32_t*)stringData;
+        return UTF32ToUTF8(text);
+    } catch (...) {
+        return "[godot_string_parse_error]";
+    }
 }
 
 SignaturePattern ParseX64dbgSignature(const char* signature) {
