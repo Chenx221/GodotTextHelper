@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <set>
 #include <string>
 #include <system_error>
@@ -48,6 +49,7 @@ namespace {
 			{ "gdscriptPathOffset", "0x250" },
 			{ "rules", json::array() },
 			{ "builtinFunctionNameUTF16", false }
+			{ "regexFilter", "" }
 		};
 		return defaultConfig.dump(4);
 	}
@@ -249,7 +251,7 @@ namespace {
 		return true;
 	}
 
-	bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF16, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules, std::string& error) {
+	bool TryLoadConfigurationJson(const std::filesystem::path& configPath, bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF16, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules, std::string& regexFilter, std::string& error) {
 		std::ifstream input(configPath);
 		if (!input.is_open()) {
 			error = "failed to open config file";
@@ -339,9 +341,30 @@ namespace {
 			}
 		}
 
+		if (root.contains("regexFilter")) {
+			if (!root["regexFilter"].is_string()) {
+				error = "regexFilter must be a string";
+				return false;
+			}
+
+			const std::string pattern = root["regexFilter"].get<std::string>();
+			if (!pattern.empty()) {
+				try {
+					std::regex testRegex(pattern);
+					(void)testRegex;
+				}
+				catch (const std::regex_error& ex) {
+					error = std::string("regexFilter is not a valid regex: ") + ex.what();
+					return false;
+				}
+			}
+
+			regexFilter = pattern;
+		}
+
 		for (auto it = root.begin(); it != root.end(); ++it) {
 			const std::string key = ToLowerString(it.key());
-			if (key != "clipboard" && key != "logfunctionname" && key != "filterduplicatefunctionlog" && key != "gdscriptinstanceoffset" && key != "gdscriptpathoffset" && key != "rules" && key != "builtinfunctionnameutf16") {
+			if (key != "clipboard" && key != "logfunctionname" && key != "filterduplicatefunctionlog" && key != "gdscriptinstanceoffset" && key != "gdscriptpathoffset" && key != "rules" && key != "builtinfunctionnameutf16" && key != "regexfilter") {
 				error = "unknown top-level field: " + it.key();
 				return false;
 			}
@@ -361,7 +384,7 @@ namespace {
 
 }
 
-bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF16, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules) {
+bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& filterDuplicateFunctionLog, bool& builtinFunctionNameUTF16, size_t& gdscriptInstanceOffset, size_t& gdscriptPathOffset, std::vector<HookRule>& hookRules, std::string& regexFilter) {
 	enableClipboard = false;
 	enableFunctionLog = false;
 	filterDuplicateFunctionLog = false;
@@ -369,6 +392,7 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 	gdscriptInstanceOffset = 0x10;
 	gdscriptPathOffset = 0x250;
 	hookRules.clear();
+	regexFilter.clear();
 
 	const std::filesystem::path configPath = GetConfigPath();
 	if (!EnsureConfigFileExists(configPath)) {
@@ -376,7 +400,7 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 	}
 
 	std::string error;
-	if (!TryLoadConfigurationJson(configPath, enableClipboard, enableFunctionLog, filterDuplicateFunctionLog, builtinFunctionNameUTF16, gdscriptInstanceOffset, gdscriptPathOffset, hookRules, error)) {
+	if (!TryLoadConfigurationJson(configPath, enableClipboard, enableFunctionLog, filterDuplicateFunctionLog, builtinFunctionNameUTF16, gdscriptInstanceOffset, gdscriptPathOffset, hookRules, regexFilter, error)) {
 		char buffer[1024];
 		sprintf_s(buffer, "[Config] Invalid json config: %s\n", error.c_str());
 		OutputDebugStringA(buffer);
@@ -388,18 +412,20 @@ bool LoadConfiguration(bool& enableClipboard, bool& enableFunctionLog, bool& fil
 		gdscriptInstanceOffset = 0x10;
 		gdscriptPathOffset = 0x250;
 		hookRules.clear();
+		regexFilter.clear();
 		return false;
 	}
 
 	char buffer[512];
-	sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, logFunctionName=%s, filterDuplicateFunctionLog=%s, builtinFunctionNameUTF16=%s, gdscriptInstanceOffset=0x%zX, gdscriptPathOffset=0x%zX, rules=%zu\n",
+	sprintf_s(buffer, "[Config] Loaded config: clipboard=%s, logFunctionName=%s, filterDuplicateFunctionLog=%s, builtinFunctionNameUTF16=%s, gdscriptInstanceOffset=0x%zX, gdscriptPathOffset=0x%zX, rules=%zu, regexFilter=%s\n",
 		enableClipboard ? "on" : "off",
 		enableFunctionLog ? "on" : "off",
 		filterDuplicateFunctionLog ? "on" : "off",
 		builtinFunctionNameUTF16 ? "on" : "off",
 		gdscriptInstanceOffset,
 		gdscriptPathOffset,
-		hookRules.size());
+		hookRules.size(),
+		regexFilter.empty() ? "off" : regexFilter.c_str());
 	OutputDebugStringA(buffer);
 	return true;
 }
