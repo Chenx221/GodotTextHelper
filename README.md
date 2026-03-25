@@ -114,7 +114,8 @@ Leave as default
             "function": "_on_battle_start",
             "post": true
         }
-    ]
+    ],
+    "regexFilter": "\\[[^\\]]*?\\]"
 }
 ```
 
